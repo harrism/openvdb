@@ -3285,6 +3285,24 @@ TEST(TestNanoVDBCUDA, CudaGridChecksum)
     cudaCheck(cudaFree(d_checksum));
 }// CudaGridChecksum
 
+// the full checksum of a grid with less than 4 KB after its GridData and TreeData, e.g. an empty grid, is the host's
+TEST(TestNanoVDBCUDA, CudaGridChecksumEmptyGrid)
+{
+    nanovdb::tools::build::Grid<float> buildGrid(1.0f);
+    auto handle = nanovdb::tools::createNanoGrid<nanovdb::tools::build::Grid<float>, float, nanovdb::cuda::DeviceBuffer>(buildGrid);
+    auto *grid = handle.grid<float>();
+    ASSERT_TRUE(grid);
+    EXPECT_GT(4096u, grid->gridSize() - sizeof(nanovdb::GridData) - sizeof(nanovdb::TreeData));
+    nanovdb::tools::updateChecksum(grid, nanovdb::CheckMode::Full);
+    const nanovdb::Checksum hostChecksum = grid->mChecksum;
+    EXPECT_TRUE(hostChecksum.isFull());
+    grid->mChecksum.disable();
+    handle.deviceUpload();
+    nanovdb::tools::cuda::updateChecksum(static_cast<nanovdb::GridData*>(handle.deviceData()), nanovdb::CheckMode::Full);
+    handle.deviceDownload();
+    EXPECT_EQ(hostChecksum, handle.grid<float>()->mChecksum);
+}// CudaGridChecksumEmptyGrid
+
 template <typename BuildT>
 size_t countActiveVoxels(const nanovdb::NodeManager<BuildT> *d_mgr)
 {
