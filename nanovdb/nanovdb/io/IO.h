@@ -418,7 +418,7 @@ inline bool Segment::read(std::istream& is)
         is.clear(std::ios_base::eofbit);// clear the fail flag but keep eof, so we can rewind and read again
         return false;
     } else if (!is) {// the stream ended inside the header
-        throw std::runtime_error("Failed to read a FileHeader: the file is truncated");
+        throw std::runtime_error("Failed to read a FileHeader: the file is shorter than one, so truncated or not a NanoVDB file");
     }
     const MagicType magic = toMagic(header.magic);
     if (magic != MagicType::NanoVDB && magic != MagicType::NanoFile) {
