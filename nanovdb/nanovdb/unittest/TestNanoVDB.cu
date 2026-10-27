@@ -2872,6 +2872,34 @@ TEST(TestNanoVDBCUDA, cudaIndexToGridWriteRead)
     EXPECT_EQ(0u, wrong);
 }// cudaIndexToGridWriteRead
 
+// an index grid with no active voxels gives a valid empty grid
+TEST(TestNanoVDBCUDA, cudaIndexToGridEmpty)
+{
+    using BufferT = nanovdb::cuda::DeviceBuffer;
+    nanovdb::tools::build::Grid<float> buildGrid(2.0f);
+    auto idxHdl = nanovdb::tools::createNanoGrid<nanovdb::tools::build::Grid<float>, nanovdb::ValueOnIndex, BufferT>(buildGrid, 1u);// one channel
+    auto *idxGrid = idxHdl.grid<nanovdb::ValueOnIndex>();
+    ASSERT_TRUE(idxGrid);
+    EXPECT_EQ(0u, idxGrid->activeVoxelCount());
+    EXPECT_EQ(1u, idxGrid->blindDataCount());
+    const ptrdiff_t channelOffset = nanovdb::util::PtrDiff(idxGrid->getBlindData<float>(0), idxGrid);
+    idxHdl.deviceUpload();
+    auto *d_idxGrid = idxHdl.deviceGrid<nanovdb::ValueOnIndex>();
+    auto *d_values = nanovdb::util::PtrAdd<float>(d_idxGrid, channelOffset);
+
+    auto handle = nanovdb::tools::cuda::indexToGrid<float>(d_idxGrid, d_values);
+    handle.deviceDownload();
+    auto *grid = handle.grid<float>();
+    ASSERT_TRUE(grid);
+    EXPECT_TRUE(nanovdb::tools::isValid(grid, nanovdb::CheckMode::Half, true));// Full walks node arrays, which an empty grid lacks
+    EXPECT_EQ(handle.bufferSize(), grid->gridSize());
+    EXPECT_EQ(0u, grid->activeVoxelCount());
+    EXPECT_EQ(0u, grid->tree().root().tileCount());
+    for (int level = 0; level < 3; ++level) EXPECT_EQ(0u, grid->tree().nodeCount(level));
+    EXPECT_EQ(2.0f, grid->tree().background());
+    EXPECT_EQ(2.0f, grid->tree().getValue(nanovdb::Coord(0)));
+}// cudaIndexToGridEmpty
+
 TEST(TestNanoVDBCUDA, testGridHandleCopy)
 {
     auto cudaHandle = nanovdb::tools::createLevelSetSphere<float, nanovdb::cuda::DeviceBuffer>(100);
