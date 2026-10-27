@@ -335,6 +335,10 @@ auto h = nanovdb::tools::createLevelSetSphere<float>(
 // also: createLevelSetTorus, createLevelSetBox, createFogVolumeSphere, ...
 ```
 
+The sphere's narrow band keeps a voxel when |distance - radius| < halfWidth
+(voxel units, evaluated in the grid's value type); voxels within rounding of
+that edge may fall either way. A radius below 1.5 voxels gives no active voxels.
+
 ---
 
 ## Topological operators (GPU)

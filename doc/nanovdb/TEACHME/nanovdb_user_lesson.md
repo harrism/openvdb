@@ -1027,6 +1027,10 @@ auto handle = nanovdb::tools::createNanoGrid(grid);        // GridHandle<HostBuf
 
 `CreatePrimitives.h` has helpers for common test grids:
 `createLevelSetSphere`, `createLevelSetTorus`, `createLevelSetBox`, etc.
+`createLevelSetSphere` keeps a voxel in its narrow band when
+|distance - radius| < halfWidth, in voxel units and evaluated in the grid's
+value type, so voxels within rounding of the band's edge may fall either way
+(and a radius below 1.5 voxels gives no active voxels).
 
 ### Quiz 7
 
