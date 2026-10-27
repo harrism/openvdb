@@ -79,6 +79,27 @@ if(NANOVDB_USE_CUDA)
   target_link_libraries(nanovdb_test_cuda_buffer PRIVATE nanovdb GTest::GTest GTest::Main)
   set_target_properties(nanovdb_test_cuda_buffer PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
   add_test(nanovdb_cuda_buffer_unit_test nanovdb_test_cuda_buffer)
+
+  # Compiled by the tests, without the --extended-lambda flag (NANOVDB_CUDA_EXTENDED_LAMBDA) the targets get:
+  # host-only code in a .cu file compiles, while the CUDA NodeManager and a GridHandle over a device buffer
+  # stop at an error naming the flag.
+  set(NANOVDB_TEST_NVCC ${CMAKE_CUDA_COMPILER})
+  if(CMAKE_CUDA_HOST_COMPILER)
+    list(APPEND NANOVDB_TEST_NVCC -ccbin ${CMAKE_CUDA_HOST_COMPILER})
+  endif()
+  add_test(NAME nanovdb_cuda_host_only_without_extended_lambda
+    COMMAND ${NANOVDB_TEST_NVCC} -std=c++17 -I${CMAKE_CURRENT_SOURCE_DIR}/../..
+            -c ${CMAKE_CURRENT_SOURCE_DIR}/TestCudaHostOnly.cu -o TestCudaHostOnly.o)
+  add_test(NAME nanovdb_cuda_node_manager_without_extended_lambda
+    COMMAND ${NANOVDB_TEST_NVCC} -std=c++17 -I${CMAKE_CURRENT_SOURCE_DIR}/../..
+            -c ${CMAKE_CURRENT_SOURCE_DIR}/TestCudaNodeManagerNoExtendedLambda.cu -o TestCudaNodeManagerNoExtendedLambda.o)
+  set_tests_properties(nanovdb_cuda_node_manager_without_extended_lambda PROPERTIES
+    PASS_REGULAR_EXPRESSION "require nvcc's --extended-lambda flag")
+  add_test(NAME nanovdb_cuda_grid_handle_without_extended_lambda
+    COMMAND ${NANOVDB_TEST_NVCC} -std=c++17 -I${CMAKE_CURRENT_SOURCE_DIR}/../..
+            -c ${CMAKE_CURRENT_SOURCE_DIR}/TestCudaGridHandleNoExtendedLambda.cu -o TestCudaGridHandleNoExtendedLambda.o)
+  set_tests_properties(nanovdb_cuda_grid_handle_without_extended_lambda PROPERTIES
+    PASS_REGULAR_EXPRESSION "GridHandle with a device buffer needs nvcc's --extended-lambda flag")
 endif()
 
 # -----------------------------------------------------------------------------

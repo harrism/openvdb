@@ -340,8 +340,9 @@ NodeManagerHandle<BufferT> createNodeManager(const NanoGrid<BuildT> &grid,
 
 } // namespace nanovdb
 
-#if defined(__CUDACC__)
+// The CUDA NodeManager needs nvcc's --extended-lambda, so host-only code in a .cu file compiles without it
+#if defined(__CUDACC__) && defined(__CUDACC_EXTENDED_LAMBDA__)
 #include <nanovdb/cuda/NodeManager.cuh>
-#endif// defined(__CUDACC__)
+#endif// defined(__CUDACC__) && defined(__CUDACC_EXTENDED_LAMBDA__)
 
 #endif // NANOVDB_NODEMANAGER_H_HAS_BEEN_INCLUDED

@@ -24,9 +24,11 @@ time. Skipping the link step means a fixture header can declare the
 "given" symbols a fragment assumes (`grid`, `acc`, device pointers) as
 `extern` globals — unresolved at link, but fully type-checked at compile.
 
-Everything compiles as CUDA (`.cu`) because even host-only examples pull
-in CUDA code paths (under `__CUDACC__`) when they include headers like
-`NodeManager.h` or `io/IO.h`.
+Everything compiles as CUDA (`.cu`) with nvcc's `--extended-lambda`, as GPU
+programs do. With that flag, even host-only examples pull in CUDA code paths
+(under `__CUDACC__`) when they include headers like `NodeManager.h` or
+`io/IO.h`, so those paths are compiled too; without it, those headers
+compile as host code only.
 
 ## Block tagging
 

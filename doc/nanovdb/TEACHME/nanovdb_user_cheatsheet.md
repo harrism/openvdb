@@ -66,6 +66,9 @@ find_package(nanovdb CONFIG REQUIRED)
 target_link_libraries(my_app PRIVATE nanovdb::nanovdb)
 ```
 
+The CUDA headers (`*.cuh`) need nvcc's `--extended-lambda` flag; host headers
+included in a `.cu` file compile without it.
+
 ---
 
 ## Build types (`NanoGrid<T>`)

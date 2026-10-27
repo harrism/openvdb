@@ -17,6 +17,10 @@
 #ifndef NANOVDB_CUDA_NODE_MANAGER_CUH_HAS_BEEN_INCLUDED
 #define NANOVDB_CUDA_NODE_MANAGER_CUH_HAS_BEEN_INCLUDED
 
+#if !defined(__CUDACC_EXTENDED_LAMBDA__)
+#error "nanovdb/cuda/NodeManager.cuh, and the NanoVDB CUDA headers that include it, require nvcc's --extended-lambda flag"
+#endif
+
 #include <nanovdb/util/cuda/Util.h>// for cuda::lambdaKernel
 #include <nanovdb/cuda/Buffer.h>// for the resource-aware buffers below
 #include <nanovdb/cuda/DeviceBuffer.h>
