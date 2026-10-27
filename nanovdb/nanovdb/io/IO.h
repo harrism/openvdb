@@ -220,8 +220,10 @@ bool hasGrid(const std::string& fileName, const std::string& gridName);
 bool hasGrid(std::istream& is, const std::string& gridName);
 
 /// @brief Reads and returns a vector of meta data for all the grids found in the specified file
-/// @details Only the file's headers and grid metadata are read, not the grids, so a file cut short
-///          inside its grids still returns their metadata. Use readGrids to check the grids.
+/// @details For a NanoVDB file, only its headers and grid metadata are read, not the grids, so a
+///          file cut short inside its grids still returns their metadata; use readGrids to check
+///          the grids. A raw grid buffer has no separate metadata, so it is read whole, and one
+///          cut short throws.
 std::vector<FileGridMetaData> readGridMetaData(const std::string& fileName);
 
 /// @brief Reads and returns a vector of meta data for all the grids found in the specified stream
