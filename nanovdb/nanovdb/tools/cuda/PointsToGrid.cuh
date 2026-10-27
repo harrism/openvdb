@@ -515,20 +515,22 @@ PointsToGrid<BuildT, ResourceT>::getHandle(const PtrT points,
     if (mVerbose==1) mTimer.restart("Process grid,tree,root");
     this->processGridTreeRoot(points, pointCount);
 
-    if (mVerbose==1) mTimer.restart("Process upper nodes");
-    this->processUpperNodes();
+    if (pointCount) {// unless the grid is empty
+        if (mVerbose==1) mTimer.restart("Process upper nodes");
+        this->processUpperNodes();
 
-    if (mVerbose==1) mTimer.restart("Process lower nodes");
-    this->processLowerNodes();
+        if (mVerbose==1) mTimer.restart("Process lower nodes");
+        this->processLowerNodes();
 
-    if (mVerbose==1) mTimer.restart("Process leaf nodes");
-    this->processLeafNodes(pointCount);
+        if (mVerbose==1) mTimer.restart("Process leaf nodes");
+        this->processLeafNodes(pointCount);
 
-    if (mVerbose==1) mTimer.restart("Process points");
-    this->processPoints(points, pointCount);
+        if (mVerbose==1) mTimer.restart("Process points");
+        this->processPoints(points, pointCount);
 
-    if (mVerbose==1) mTimer.restart("Process bbox");
-    this->processBBox();
+        if (mVerbose==1) mTimer.restart("Process bbox");
+        this->processBBox();
+    }
     if (mVerbose==1) mTimer.stop();
 
     if (mVerbose==1) mTimer.restart("Computation of checksum");
@@ -629,6 +631,10 @@ void PointsToGrid<BuildT, ResourceT>::countNodes(const PtrT points, size_t point
     }
 
     mMaxPointsPerVoxel = math::Min(mMaxPointsPerVoxel, pointCount);
+    if (pointCount == 0) {// empty grid: no nodes and no voxels
+        mData.nodeCount[0] = mData.nodeCount[1] = mData.nodeCount[2] = mData.voxelCount = 0u;
+        return;
+    }
     int iterCounter = 0;
     struct Foo {// pairs current voxel size, dx, with the corresponding particle density, i.e. maximum number of points per voxel
         double   dx;
@@ -893,9 +899,9 @@ struct BuildGridTreeRootFunctor
         // process Tree
         auto &tree = d_data->getTree();
         tree.setRoot(&root);
-        tree.setFirstNode(&d_data->getUpper(0));
-        tree.setFirstNode(&d_data->getLower(0));
-        tree.setFirstNode(&d_data->getLeaf(0));
+        tree.setFirstNode(d_data->nodeCount[2] ? &d_data->getUpper(0) : nullptr);
+        tree.setFirstNode(d_data->nodeCount[1] ? &d_data->getLower(0) : nullptr);
+        tree.setFirstNode(d_data->nodeCount[0] ? &d_data->getLeaf(0) : nullptr);
         tree.mNodeCount[2] = d_data->nodeCount[2];
         tree.mNodeCount[1] = d_data->nodeCount[1];
         tree.mNodeCount[0] = d_data->nodeCount[0];
@@ -906,13 +912,14 @@ struct BuildGridTreeRootFunctor
 
         // process Grid
         auto &grid = d_data->getGrid();
-        grid.init({GridFlags::HasBBox, GridFlags::IsBreadthFirst}, d_data->size, d_data->map, toGridType<BuildT>());
+        grid.init({GridFlags::IsBreadthFirst}, d_data->size, d_data->map, toGridType<BuildT>());// processBBox sets HasBBox unless the grid is empty
         grid.mChecksum = ~uint64_t(0);// set all bits on which means it's disabled
         grid.mBlindMetadataCount  = util::is_same<BuildT, Point>::value;// ? 1u : 0u;
         grid.mBlindMetadataOffset = d_data->meta;
         if (pointType != PointType::Disable) {
-            const auto lastLeaf = tree.mNodeCount[0] - 1;
-            grid.mData1 = d_data->pointsPerLeafPrefix[lastLeaf] + d_data->pointsPerLeaf[lastLeaf];
+            if (const auto leafCount = tree.mNodeCount[0]) {// unless the grid is empty
+                grid.mData1 = d_data->pointsPerLeafPrefix[leafCount - 1] + d_data->pointsPerLeaf[leafCount - 1];
+            }
             auto &meta = d_data->getMeta();
             meta.mDataOffset = sizeof(GridBlindMetaData);// blind data is placed right after this meta data
             meta.mValueCount = pointCount;
@@ -1000,6 +1007,7 @@ struct BuildGridTreeRootFunctor
                 printf("Error in PointsToGrid<BuildT, ResourceT>::processGridTreeRoot: invalid pointType\n");
             }
         } else if constexpr(BuildTraits<BuildT>::is_onindex) {
+            grid.mData1 = 1u;// the background, until processLeafNodes counts the active voxels
             grid.mGridClass = GridClass::IndexGrid;
         } else if constexpr(BuildTraits<BuildT>::is_offindex) {
             grid.mData1 = 1u + 512u*d_data->nodeCount[0];

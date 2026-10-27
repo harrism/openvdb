@@ -1400,6 +1400,45 @@ TEST(TestNanoVDBCUDA, OneVoxelToGrid)
     //timer.stop();
 }// OneVoxelToGrid
 
+// an empty list of voxels gives a valid empty grid, as createNanoGrid does for an empty build::Grid
+TEST(TestNanoVDBCUDA, EmptyVoxelsToGrid)
+{
+    auto test = [](auto buildType) {
+        using BuildT = decltype(buildType);
+        const nanovdb::Coord *d_coords = nullptr;
+        auto handle = nanovdb::tools::cuda::voxelsToGrid<BuildT>(d_coords, 0u, 0.5);
+        handle.deviceDownload();
+        auto *grid = handle.template grid<BuildT>();
+        ASSERT_TRUE(grid);
+        EXPECT_TRUE(nanovdb::tools::isValid(grid, nanovdb::CheckMode::Half, true));// Full walks node arrays, which an empty grid lacks
+        EXPECT_EQ(handle.bufferSize(), grid->gridSize());
+        EXPECT_EQ(0u, grid->activeVoxelCount());
+        EXPECT_EQ(0u, grid->tree().root().tileCount());
+        for (int level = 0; level < 3; ++level) EXPECT_EQ(0u, grid->tree().nodeCount(level));
+        EXPECT_FALSE(grid->hasBBox());
+        EXPECT_EQ(nanovdb::Vec3d(0.5), grid->voxelSize());
+        if constexpr(nanovdb::BuildTraits<BuildT>::is_index) {
+            EXPECT_EQ(1u, grid->valueCount());// the background
+        }
+    };
+    test(float());
+    test(nanovdb::ValueOnIndex());
+
+    // the same for an empty list of points
+    nanovdb::Vec3f *d_points = nullptr;
+    nanovdb::tools::cuda::PointsToGrid<nanovdb::Point> converter(0.5);
+    auto handle = converter.getHandle(d_points, 0u);
+    handle.deviceDownload();
+    auto *grid = handle.grid<nanovdb::Point>();
+    ASSERT_TRUE(grid);
+    EXPECT_TRUE(nanovdb::tools::isValid(grid, nanovdb::CheckMode::Half, true));// Full walks node arrays, which an empty grid lacks
+    EXPECT_EQ(handle.bufferSize(), grid->gridSize());
+    EXPECT_EQ(0u, grid->activeVoxelCount());
+    EXPECT_EQ(0u, grid->pointCount());
+    EXPECT_EQ(1u, grid->blindDataCount());
+    EXPECT_EQ(0u, grid->blindMetaData(0).mValueCount);
+}// EmptyVoxelsToGrid
+
 TEST(TestNanoVDBCUDA, ThreePointsToGrid)
 {
     using BuildT = nanovdb::Point;
