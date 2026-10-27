@@ -162,7 +162,12 @@ __global__ void processGridTreeRootKernel(IndexToGridNodeAccessor<SrcBuildT> *no
 
     // process Grid
     *dstGrid.data() = *srcGrid.data();
+    dstGrid.mGridSize = nodeAcc->size;
+    dstGrid.mGridClass = toGridClass<DstBuildT>();// GridClass::IndexGrid is invalid for DstBuildT
     dstGrid.mGridType = toGridType<DstBuildT>();
+    dstGrid.mFlags.setMaskOff(GridFlags::HasLongGridName);// blind data, such as a long grid name, is not copied
+    dstGrid.mBlindMetadataOffset = nodeAcc->meta;
+    dstGrid.mBlindMetadataCount = 0u;
     dstGrid.mData1 = 0u;
     dstGrid.mGridIndex = 0u; // Possibly overwriting input; returned grid has batch size 1
     dstGrid.mGridCount = 1u;
@@ -171,9 +176,9 @@ __global__ void processGridTreeRootKernel(IndexToGridNodeAccessor<SrcBuildT> *no
     // process Tree
     *dstTree.data() = *srcTree.data();
     dstTree.setRoot(&dstRoot);
-    dstTree.setFirstNode(&nodeAcc->template dstNode<DstBuildT,2>(0));
-    dstTree.setFirstNode(&nodeAcc->template dstNode<DstBuildT,1>(0));
-    dstTree.setFirstNode(&nodeAcc->template dstNode<DstBuildT,0>(0));
+    dstTree.setFirstNode(nodeAcc->nodeCount[2] ? &nodeAcc->template dstNode<DstBuildT,2>(0) : nullptr);
+    dstTree.setFirstNode(nodeAcc->nodeCount[1] ? &nodeAcc->template dstNode<DstBuildT,1>(0) : nullptr);
+    dstTree.setFirstNode(nodeAcc->nodeCount[0] ? &nodeAcc->template dstNode<DstBuildT,0>(0) : nullptr);
 
     // process Root
     dstRoot.mBBox = srcRoot.mBBox;
@@ -357,22 +362,31 @@ GridHandle<BufferT> IndexToGrid<SrcBuildT, ResourceT>::getHandle(const typename 
     processGridTreeRootKernel<SrcBuildT,DstBuildT><<<1, 1, 0, mStream>>>(mDevNodeAcc, srcValues);
     cudaCheckError();
 
+    // a kernel launch with zero blocks fails, so skip the levels an empty grid lacks
     if (mVerbose) mTimer.restart("Process root children and tiles");
-    processRootTilesKernel<SrcBuildT,DstBuildT><<<mNodeAcc.nodeCount[3], 1, 0, mStream>>>(mDevNodeAcc, srcValues);
-    cudaCheckError();
+    if (mNodeAcc.nodeCount[3]) {
+        processRootTilesKernel<SrcBuildT,DstBuildT><<<mNodeAcc.nodeCount[3], 1, 0, mStream>>>(mDevNodeAcc, srcValues);
+        cudaCheckError();
+    }
 
     mGridNameBuf.destroy(mStream);
 
     if (mVerbose) mTimer.restart("Process upper internal nodes");
-    processNodesKernel<SrcBuildT,DstBuildT,2><<<mNodeAcc.nodeCount[2], dim3(32,32), 0, mStream>>>(mDevNodeAcc, srcValues);
-    cudaCheckError();
+    if (mNodeAcc.nodeCount[2]) {
+        processNodesKernel<SrcBuildT,DstBuildT,2><<<mNodeAcc.nodeCount[2], dim3(32,32), 0, mStream>>>(mDevNodeAcc, srcValues);
+        cudaCheckError();
+    }
 
     if (mVerbose) mTimer.restart("Process lower internal nodes");
-    processNodesKernel<SrcBuildT,DstBuildT,1><<<mNodeAcc.nodeCount[1], dim3(16,16), 0, mStream>>>(mDevNodeAcc, srcValues);
-    cudaCheckError();
+    if (mNodeAcc.nodeCount[1]) {
+        processNodesKernel<SrcBuildT,DstBuildT,1><<<mNodeAcc.nodeCount[1], dim3(16,16), 0, mStream>>>(mDevNodeAcc, srcValues);
+        cudaCheckError();
+    }
 
     if (mVerbose) mTimer.restart("Process leaf nodes");
-    processLeafsKernel<SrcBuildT,DstBuildT><<<mNodeAcc.nodeCount[0], dim3(8,8), 0, mStream>>>(mDevNodeAcc, srcValues);
+    if (mNodeAcc.nodeCount[0]) {
+        processLeafsKernel<SrcBuildT,DstBuildT><<<mNodeAcc.nodeCount[0], dim3(8,8), 0, mStream>>>(mDevNodeAcc, srcValues);
+    }
     if (mVerbose) mTimer.stop();
     cudaCheckError();
 

@@ -1337,6 +1337,56 @@ TEST(TestNanoVDBCUDA, CudaSignedFloodFillNonAdjacentRootChildrenFilled)
     EXPECT_EQ(-1.0f, acc.getValue(nanovdb::Coord(0, 0, 2 * dim)));
 }// CudaSignedFloodFillNonAdjacentRootChildrenFilled
 
+// Regression test for https://github.com/AcademySoftwareFoundation/openvdb/issues/2357: flips the sign of
+// every inactive leaf value and every internal-node tile of a sphere that was flood filled on the host
+// (build::sdfToLevelSet), and checks that the device flood fill gives each of them the host value again
+TEST(TestNanoVDBCUDA, CudaSignedFloodFillMatchesHost)
+{
+    using DevBufT = nanovdb::cuda::Buffer<std::byte, nanovdb::cuda::DeviceResource>;
+    auto refHdl = nanovdb::tools::createLevelSetSphere<float>(100.0, nanovdb::Vec3d(64.0));
+    auto hdl = refHdl.copy<nanovdb::HostBuffer>();
+    const auto &refTree = refHdl.grid<float>()->tree();
+    auto &tree = hdl.grid<float>()->tree();
+
+    for (auto *leaf = tree.getFirstLeaf(), *end = leaf + tree.nodeCount(0); leaf != end; ++leaf) {
+        for (uint32_t n = 0; n < leaf->SIZE; ++n) {
+            if (!leaf->valueMask().isOn(n)) leaf->setValueOnly(n, -leaf->getValue(n));
+        }
+    }
+    auto flipTiles = [](auto *node, uint32_t count) {
+        for (auto *end = node + count; node != end; ++node) {
+            for (uint32_t n = 0; n < node->SIZE; ++n) {
+                if (!node->childMask().isOn(n)) node->data()->setValue(n, -node->data()->getValue(n));
+            }
+        }
+    };
+    flipTiles(tree.getFirstLower(), tree.nodeCount(1));
+    flipTiles(tree.getFirstUpper(), tree.nodeCount(2));
+
+    auto devHdl = nanovdb::cuda::copyTo<DevBufT>(hdl, cudaStream_t(0));
+    nanovdb::tools::cuda::signedFloodFill(devHdl.deviceGrid<float>());
+    auto outHdl = nanovdb::cuda::copyTo<nanovdb::HostBuffer>(devHdl, cudaStream_t(0)); // synchronizes before returning
+    const auto &outTree = outHdl.grid<float>()->tree();
+
+    uint64_t wrongVoxels = 0;
+    for (uint32_t i = 0; i < outTree.nodeCount(0); ++i) {
+        const auto &leaf = outTree.getFirstLeaf()[i], &ref = refTree.getFirstLeaf()[i];
+        for (uint32_t n = 0; n < leaf.SIZE; ++n) wrongVoxels += leaf.getValue(n) != ref.getValue(n);
+    }
+    auto wrongTiles = [](const auto *node, const auto *ref, uint32_t count) {
+        uint64_t wrong = 0;
+        for (uint32_t i = 0; i < count; ++i) {
+            for (uint32_t n = 0; n < node[i].SIZE; ++n) {
+                wrong += !node[i].childMask().isOn(n) && node[i].data()->getValue(n) != ref[i].data()->getValue(n);
+            }
+        }
+        return wrong;
+    };
+    EXPECT_EQ(0u, wrongVoxels);
+    EXPECT_EQ(0u, wrongTiles(outTree.getFirstLower(), refTree.getFirstLower(), outTree.nodeCount(1)));
+    EXPECT_EQ(0u, wrongTiles(outTree.getFirstUpper(), refTree.getFirstUpper(), outTree.nodeCount(2)));
+}// CudaSignedFloodFillMatchesHost
+
 TEST(TestNanoVDBCUDA, OneVoxelToGrid)
 {
     using BuildT = float;
@@ -1399,6 +1449,45 @@ TEST(TestNanoVDBCUDA, OneVoxelToGrid)
     EXPECT_EQ(nanovdb::Coord(1,2,3), acc.root().bbox()[1]);
     //timer.stop();
 }// OneVoxelToGrid
+
+// an empty list of voxels gives a valid empty grid, as createNanoGrid does for an empty build::Grid
+TEST(TestNanoVDBCUDA, EmptyVoxelsToGrid)
+{
+    auto test = [](auto buildType) {
+        using BuildT = decltype(buildType);
+        const nanovdb::Coord *d_coords = nullptr;
+        auto handle = nanovdb::tools::cuda::voxelsToGrid<BuildT>(d_coords, 0u, 0.5);
+        handle.deviceDownload();
+        auto *grid = handle.template grid<BuildT>();
+        ASSERT_TRUE(grid);
+        EXPECT_TRUE(nanovdb::tools::isValid(grid, nanovdb::CheckMode::Half, true));// Full walks node arrays, which an empty grid lacks
+        EXPECT_EQ(handle.bufferSize(), grid->gridSize());
+        EXPECT_EQ(0u, grid->activeVoxelCount());
+        EXPECT_EQ(0u, grid->tree().root().tileCount());
+        for (int level = 0; level < 3; ++level) EXPECT_EQ(0u, grid->tree().nodeCount(level));
+        EXPECT_FALSE(grid->hasBBox());
+        EXPECT_EQ(nanovdb::Vec3d(0.5), grid->voxelSize());
+        if constexpr(nanovdb::BuildTraits<BuildT>::is_index) {
+            EXPECT_EQ(1u, grid->valueCount());// the background
+        }
+    };
+    test(float());
+    test(nanovdb::ValueOnIndex());
+
+    // the same for an empty list of points
+    nanovdb::Vec3f *d_points = nullptr;
+    nanovdb::tools::cuda::PointsToGrid<nanovdb::Point> converter(0.5);
+    auto handle = converter.getHandle(d_points, 0u);
+    handle.deviceDownload();
+    auto *grid = handle.grid<nanovdb::Point>();
+    ASSERT_TRUE(grid);
+    EXPECT_TRUE(nanovdb::tools::isValid(grid, nanovdb::CheckMode::Half, true));// Full walks node arrays, which an empty grid lacks
+    EXPECT_EQ(handle.bufferSize(), grid->gridSize());
+    EXPECT_EQ(0u, grid->activeVoxelCount());
+    EXPECT_EQ(0u, grid->pointCount());
+    EXPECT_EQ(1u, grid->blindDataCount());
+    EXPECT_EQ(0u, grid->blindMetaData(0).mValueCount);
+}// EmptyVoxelsToGrid
 
 TEST(TestNanoVDBCUDA, ThreePointsToGrid)
 {
@@ -2778,6 +2867,89 @@ TEST(TestNanoVDBCUDA, cudaIndexToGridFromMultiGridSource)
     cudaCheck(cudaFree(d_values));
 }// cudaIndexToGridFromMultiGridSource
 
+// indexToGrid returns a valid grid of the value type, which can be written to file and read back: its header
+// records its own size, a class valid for its type and no blind data, though the source carries blind data
+TEST(TestNanoVDBCUDA, cudaIndexToGridWriteRead)
+{
+    using BufferT = nanovdb::cuda::DeviceBuffer;
+    const std::string name(300, 'a');// a long grid name is stored as blind data
+    auto floatHdl = nanovdb::tools::createLevelSetSphere<float, nanovdb::HostBuffer>(20, nanovdb::Vec3d(0), 1, 3, nanovdb::Vec3d(0), name);
+    auto *floatGrid = floatHdl.grid<float>();
+    ASSERT_TRUE(floatGrid);
+    auto idxHdl = nanovdb::tools::createNanoGrid<nanovdb::FloatGrid, nanovdb::ValueOnIndex, BufferT>(*floatGrid, 1u);// one channel, with stats
+    auto *idxGrid = idxHdl.grid<nanovdb::ValueOnIndex>();
+    ASSERT_TRUE(idxGrid);
+    EXPECT_EQ(nanovdb::GridClass::IndexGrid, idxGrid->gridClass());
+    EXPECT_EQ(2u, idxGrid->blindDataCount());// the grid name and the channel
+    int channel = -1;
+    for (uint32_t n = 0; n < idxGrid->blindDataCount(); ++n) {
+        if (idxGrid->blindMetaData(n).mDataClass == nanovdb::GridBlindDataClass::ChannelArray) channel = n;
+    }
+    ASSERT_LE(0, channel);
+    const ptrdiff_t channelOffset = nanovdb::util::PtrDiff(idxGrid->getBlindData<float>(channel), idxGrid);
+    idxHdl.deviceUpload();
+    auto *d_idxGrid = idxHdl.deviceGrid<nanovdb::ValueOnIndex>();
+    auto *d_values = nanovdb::util::PtrAdd<float>(d_idxGrid, channelOffset);
+
+    auto handle = nanovdb::tools::cuda::indexToGrid<float>(d_idxGrid, d_values);
+    handle.deviceDownload();
+    auto *gridData = handle.gridData();
+    ASSERT_TRUE(gridData);
+    ASSERT_EQ(handle.bufferSize(), gridData->mGridSize);// else writing it truncates the grid
+    EXPECT_EQ(nanovdb::GridType::Float, gridData->mGridType);
+    EXPECT_TRUE(nanovdb::isValid(gridData->mGridType, gridData->mGridClass));
+    EXPECT_EQ(0u, gridData->mBlindMetadataCount);
+    EXPECT_EQ(gridData->mGridSize, gridData->mBlindMetadataOffset);
+    ASSERT_TRUE(handle.grid<float>());
+    EXPECT_EQ(name.substr(0, nanovdb::GridData::MaxNameSize - 1), std::string(handle.grid<float>()->gridName()));
+
+    const std::string fileName("data/cuda_index_to_grid.nvdb");
+    nanovdb::io::writeGrid(fileName, handle);
+    auto readHdl = nanovdb::io::readGrid(fileName);
+    auto *grid = readHdl.grid<float>();
+    ASSERT_TRUE(grid);
+    EXPECT_EQ(readHdl.bufferSize(), grid->gridSize());
+    EXPECT_TRUE(nanovdb::tools::isValid(grid, nanovdb::CheckMode::Full, true));
+    EXPECT_EQ(floatGrid->activeVoxelCount(), grid->activeVoxelCount());
+    auto srcAcc = floatGrid->getAccessor();
+    auto dstAcc = grid->getAccessor();
+    uint64_t wrong = 0;
+    const auto bbox = floatGrid->indexBBox().expandBy(8);
+    for (auto it = bbox.begin(); it; ++it) {
+        const bool active = srcAcc.isActive(*it);// a ValueOnIndex grid indexes active values only
+        wrong += active != dstAcc.isActive(*it) || (active && srcAcc.getValue(*it) != dstAcc.getValue(*it));
+    }
+    EXPECT_EQ(0u, wrong);
+}// cudaIndexToGridWriteRead
+
+// an index grid with no active voxels gives a valid empty grid
+TEST(TestNanoVDBCUDA, cudaIndexToGridEmpty)
+{
+    using BufferT = nanovdb::cuda::DeviceBuffer;
+    nanovdb::tools::build::Grid<float> buildGrid(2.0f);
+    auto idxHdl = nanovdb::tools::createNanoGrid<nanovdb::tools::build::Grid<float>, nanovdb::ValueOnIndex, BufferT>(buildGrid, 1u);// one channel
+    auto *idxGrid = idxHdl.grid<nanovdb::ValueOnIndex>();
+    ASSERT_TRUE(idxGrid);
+    EXPECT_EQ(0u, idxGrid->activeVoxelCount());
+    EXPECT_EQ(1u, idxGrid->blindDataCount());
+    const ptrdiff_t channelOffset = nanovdb::util::PtrDiff(idxGrid->getBlindData<float>(0), idxGrid);
+    idxHdl.deviceUpload();
+    auto *d_idxGrid = idxHdl.deviceGrid<nanovdb::ValueOnIndex>();
+    auto *d_values = nanovdb::util::PtrAdd<float>(d_idxGrid, channelOffset);
+
+    auto handle = nanovdb::tools::cuda::indexToGrid<float>(d_idxGrid, d_values);
+    handle.deviceDownload();
+    auto *grid = handle.grid<float>();
+    ASSERT_TRUE(grid);
+    EXPECT_TRUE(nanovdb::tools::isValid(grid, nanovdb::CheckMode::Half, true));// Full walks node arrays, which an empty grid lacks
+    EXPECT_EQ(handle.bufferSize(), grid->gridSize());
+    EXPECT_EQ(0u, grid->activeVoxelCount());
+    EXPECT_EQ(0u, grid->tree().root().tileCount());
+    for (int level = 0; level < 3; ++level) EXPECT_EQ(0u, grid->tree().nodeCount(level));
+    EXPECT_EQ(2.0f, grid->tree().background());
+    EXPECT_EQ(2.0f, grid->tree().getValue(nanovdb::Coord(0)));
+}// cudaIndexToGridEmpty
+
 TEST(TestNanoVDBCUDA, testGridHandleCopy)
 {
     auto cudaHandle = nanovdb::tools::createLevelSetSphere<float, nanovdb::cuda::DeviceBuffer>(100);
@@ -3112,6 +3284,24 @@ TEST(TestNanoVDBCUDA, CudaGridChecksum)
     }
     cudaCheck(cudaFree(d_checksum));
 }// CudaGridChecksum
+
+// the full checksum of a grid with less than 4 KB after its GridData and TreeData, e.g. an empty grid, is the host's
+TEST(TestNanoVDBCUDA, CudaGridChecksumEmptyGrid)
+{
+    nanovdb::tools::build::Grid<float> buildGrid(1.0f);
+    auto handle = nanovdb::tools::createNanoGrid<nanovdb::tools::build::Grid<float>, float, nanovdb::cuda::DeviceBuffer>(buildGrid);
+    auto *grid = handle.grid<float>();
+    ASSERT_TRUE(grid);
+    EXPECT_GT(4096u, grid->gridSize() - sizeof(nanovdb::GridData) - sizeof(nanovdb::TreeData));
+    nanovdb::tools::updateChecksum(grid, nanovdb::CheckMode::Full);
+    const nanovdb::Checksum hostChecksum = grid->mChecksum;
+    EXPECT_TRUE(hostChecksum.isFull());
+    grid->mChecksum.disable();
+    handle.deviceUpload();
+    nanovdb::tools::cuda::updateChecksum(static_cast<nanovdb::GridData*>(handle.deviceData()), nanovdb::CheckMode::Full);
+    handle.deviceDownload();
+    EXPECT_EQ(hostChecksum, handle.grid<float>()->mChecksum);
+}// CudaGridChecksumEmptyGrid
 
 template <typename BuildT>
 size_t countActiveVoxels(const nanovdb::NodeManager<BuildT> *d_mgr)
@@ -3790,6 +3980,39 @@ TEST(TestNanoVDBCUDA, DilateInjectPrune_ValueOnIndex)
     EXPECT_TRUE(prunedHandle.grid<BuildT>());
     EXPECT_EQ(inputHandle.grid<BuildT>()->mChecksum.full(), prunedHandle.grid<BuildT>()->mChecksum.full());
 }// DilateInjectPrune_ValueOnIndex
+
+// pruning every voxel gives a valid empty grid
+TEST(TestNanoVDBCUDA, PruneAll_ValueOnIndex)
+{
+    using BuildT = nanovdb::ValueOnIndex;
+    std::vector<nanovdb::Coord> voxels;
+    for (int i = 0; i < 10; ++i) for (int j = 0; j < 10; ++j) for (int k = 0; k < 10; ++k) voxels.emplace_back(i*3, j*3, k*3);
+    voxels.emplace_back(-1000, 0, 1000);// in another root tile
+    auto voxelBuffer = nanovdb::cuda::DeviceBuffer::create(voxels.size() * sizeof(nanovdb::Coord), nullptr, false);
+    cudaCheck(cudaMemcpy(voxelBuffer.deviceData(), voxels.data(), voxels.size() * sizeof(nanovdb::Coord), cudaMemcpyHostToDevice));
+    auto inputHandle = nanovdb::tools::cuda::voxelsToGrid<BuildT>(static_cast<nanovdb::Coord*>(voxelBuffer.deviceData()), voxels.size());
+    auto inputGrid = inputHandle.deviceGrid<BuildT>();
+    ASSERT_TRUE(inputGrid);
+    auto inputTreeData = nanovdb::util::cuda::DeviceGridTraits<BuildT>::getTreeData(inputGrid);
+    EXPECT_EQ(2u, inputTreeData.mNodeCount[2]);
+
+    // leaf masks that retain no voxel
+    nanovdb::cuda::Buffer<nanovdb::Mask<3>> maskBuffer(cudaStream_t(0), inputTreeData.mNodeCount[0], nanovdb::cuda::noInit);
+    cudaCheck(cudaMemset(maskBuffer.data(), 0, inputTreeData.mNodeCount[0] * sizeof(nanovdb::Mask<3>)));
+
+    nanovdb::tools::cuda::PruneGrid<BuildT> pruner(inputGrid, maskBuffer.data());
+    pruner.setChecksum(nanovdb::CheckMode::Default);
+    auto prunedHandle = pruner.getHandle();
+    prunedHandle.deviceDownload();
+    auto *grid = prunedHandle.grid<BuildT>();
+    ASSERT_TRUE(grid);
+    EXPECT_TRUE(nanovdb::tools::isValid(grid, nanovdb::CheckMode::Half, true));// Full walks node arrays, which an empty grid lacks
+    EXPECT_EQ(prunedHandle.bufferSize(), grid->gridSize());
+    EXPECT_EQ(0u, grid->activeVoxelCount());
+    EXPECT_EQ(0u, grid->tree().root().tileCount());
+    for (int level = 0; level < 3; ++level) EXPECT_EQ(0u, grid->tree().nodeCount(level));
+    EXPECT_EQ(1u, grid->valueCount());// the background
+}// PruneAll_ValueOnIndex
 
 // Busy-wait on whatever stream it is launched on; used to occupy the default
 // stream so that a kernel mistakenly launched there (instead of the caller's
