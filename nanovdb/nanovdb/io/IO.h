@@ -145,6 +145,8 @@ template<typename BufferT>
 static void read(std::istream& is, BufferT& buffer, Codec codec);
 
 static void read(std::istream& is, char* data, fileSize_t size, Codec codec);
+
+static void skip(std::istream& is, std::streamoff bytes);
 } // namespace Internal
 /// @endcond
 
@@ -210,13 +212,16 @@ struct Segment
 
 /// @brief Return true if the file contains a grid with the specified name
 /// @details Only the file's headers and grid metadata are read: true does not mean the grid
-///          itself is readable. Throws std::runtime_error if the headers cannot be read.
+///          itself is readable. Throws std::runtime_error if the headers cannot be read, or if
+///          the file ends before the headers of a later segment it would need to look in.
 bool hasGrid(const std::string& fileName, const std::string& gridName);
 
 /// @brief Return true if the stream contains a grid with the specified name
 bool hasGrid(std::istream& is, const std::string& gridName);
 
 /// @brief Reads and returns a vector of meta data for all the grids found in the specified file
+/// @details Only the file's headers and grid metadata are read, not the grids, so a file cut short
+///          inside its grids still returns their metadata. Use readGrids to check the grids.
 std::vector<FileGridMetaData> readGridMetaData(const std::string& fileName);
 
 /// @brief Reads and returns a vector of meta data for all the grids found in the specified stream
@@ -330,6 +335,17 @@ void Internal::read(std::istream& is, char* data, fileSize_t residual, Codec cod
     }
     if (!is) throw std::runtime_error("Failed to read Tree from file");
 } // Internal::read
+
+/// @brief skip @a bytes of grid data forward, and throw if the stream ends before them, as it does
+///        in a file cut short inside a grid it skips (a seek alone can move past the end of a file)
+void Internal::skip(std::istream& is, std::streamoff bytes)
+{
+    if (bytes > 0) {
+        is.seekg(bytes - 1, std::ios_base::cur);
+        char last;
+        if (!is.read(&last, 1)) throw std::runtime_error("Failed to read Tree from file");
+    }
+} // Internal::skip
 /// @endcond
 
 // --------------------------> Implementations for FileGridMetaData <------------------------------------
@@ -528,7 +544,7 @@ GridHandle<BufferT> readGrid(std::istream& is, int n, const BufferT& pool)
                     bufferSize += m.gridSize;
                     skipSize   += m.fileSize;
                 }// loop over grids in segment
-                is.seekg(skipSize, std::ios_base::cur); // skip forward from the current position
+                Internal::skip(is, skipSize); // skip forward from the current position
             }// loop over segments
             auto buffer = BufferT::create(bufferSize, &pool);
             char *ptr = (char*)buffer.data();
@@ -561,7 +577,7 @@ GridHandle<BufferT> readGrid(std::istream& is, int n, const BufferT& pool)
                         seek += m.fileSize;
                     }
                 }// loop over grids in segment
-                is.seekg(seek, std::ios_base::cur); // skip forward from the current position
+                Internal::skip(is, seek); // skip forward from the current position
             }// loop over segments
             if (n != counter) throw std::runtime_error("stream does not contain a #" + std::to_string(n) + " grid");
         }
@@ -622,7 +638,7 @@ GridHandle<BufferT> readGrid(std::istream& is, const std::string& gridName, cons
                     seek += m.fileSize;
                 }
             }
-            is.seekg(seek, std::ios_base::cur); // skip forward from the current position
+            Internal::skip(is, seek); // skip forward from the current position
         }
     }
     throw GridNotFoundError("Grid name '" + gridName + "' not found in file");
@@ -735,7 +751,7 @@ inline bool hasGrid(std::istream& is, const std::string& gridName)
             if (m.nameKey == key && m.gridName == gridName) return true; // check for hash key collision
             seek += m.fileSize;
         }// loop over grid meta data in segment
-        is.seekg(seek, std::ios_base::cur);
+        Internal::skip(is, seek);// a file cut short before the next segment cannot answer false
     }// loop over segments
     return false;
 }// hasGrid

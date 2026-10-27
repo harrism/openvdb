@@ -8731,6 +8731,63 @@ TEST_F(TestNanoVDB, ReadGridNotFound)
     }
 }// ReadGridNotFound
 
+// A raw grid buffer (grids written without the file's framing) cut short is unreadable: no read
+// hangs or returns, and a cut buffer is never reported as missing the grid asked for.
+TEST_F(TestNanoVDB, ReadRawBufferCutShortThrows)
+{
+    const std::string fileName("data/raw_cut.nvdb");
+    std::vector<nanovdb::GridHandle<nanovdb::HostBuffer>> handles;
+    handles.emplace_back(nanovdb::tools::createLevelSetSphere<float>(20.0, nanovdb::Vec3d(0), 1.0, 3.0, nanovdb::Vec3d(0), "first"));
+    handles.emplace_back(nanovdb::tools::createLevelSetSphere<float>(10.0, nanovdb::Vec3d(0), 1.0, 3.0, nanovdb::Vec3d(0), "second"));
+    auto merged = nanovdb::mergeGrids(handles);
+    ASSERT_EQ(2u, merged.gridCount());
+    std::ostringstream os(std::ios_base::out | std::ios_base::binary);
+    merged.write(os);
+    const std::string bytes = os.str();
+    for (size_t size : {size_t(merged.gridSize(0)) + 100, bytes.size() - 1}) {
+        SCOPED_TRACE("cut at " + std::to_string(size) + " of " + std::to_string(bytes.size()) + " bytes");
+        writePrefix(fileName, bytes, size);
+        EXPECT_EQ(Outcome::Threw, runWithin([=]{ nanovdb::io::readGrids(fileName); }));
+        EXPECT_EQ(Outcome::Threw, runWithin([=]{ nanovdb::io::readGrid(fileName, -1); }));
+        EXPECT_EQ(Outcome::Threw, runWithin([=]{ nanovdb::io::readGrid(fileName, 1); }));
+        EXPECT_EQ(Outcome::Threw, runWithin([=]{ nanovdb::io::readGrid(fileName, std::string("second")); }));
+        EXPECT_EQ(Outcome::Threw, runWithin([=]{ nanovdb::io::readGrid(fileName, std::string("absent")); }));
+        EXPECT_THROW(nanovdb::io::readGrid(fileName, std::string("absent")), std::runtime_error);
+        try {
+            nanovdb::io::readGrid(fileName, std::string("absent"));
+        } catch (const nanovdb::GridNotFoundError&) {
+            ADD_FAILURE() << "a cut raw buffer was reported as missing the grid";
+        } catch (const std::runtime_error&) {
+        }
+    }
+    writePrefix(fileName, bytes, bytes.size());// whole, the same calls succeed
+    EXPECT_EQ(1u, nanovdb::io::readGrids(fileName).size());
+    EXPECT_TRUE(nanovdb::io::readGrid(fileName, std::string("second")));
+    EXPECT_THROW(nanovdb::io::readGrid(fileName, std::string("absent")), nanovdb::GridNotFoundError);
+}// ReadRawBufferCutShortThrows
+
+// A file cut short inside a grid it does not hold the asked-for name in is unreadable, not
+// missing the grid: readGrid throws a std::runtime_error other than GridNotFoundError, and
+// hasGrid throws rather than answering false.
+TEST_F(TestNanoVDB, ReadAbsentNameInCutFileIsUnreadable)
+{
+    const std::string fileName("data/cut_absent.nvdb");
+    const std::string bytes = sphereFile("surface");
+    writePrefix(fileName, bytes, bytes.size() - 1);
+    try {
+        nanovdb::io::readGrid(fileName, std::string("absent"));
+        ADD_FAILURE() << "readGrid returned from a cut file";
+    } catch (const nanovdb::GridNotFoundError&) {
+        ADD_FAILURE() << "a cut file was reported as missing the grid";
+    } catch (const std::runtime_error&) {
+    }
+    EXPECT_THROW(nanovdb::io::hasGrid(fileName, "absent"), std::runtime_error);
+    EXPECT_TRUE(nanovdb::io::hasGrid(fileName, "surface"));// its headers are whole
+    writePrefix(fileName, bytes, bytes.size());
+    EXPECT_THROW(nanovdb::io::readGrid(fileName, std::string("absent")), nanovdb::GridNotFoundError);
+    EXPECT_FALSE(nanovdb::io::hasGrid(fileName, "absent"));
+}// ReadAbsentNameInCutFileIsUnreadable
+
 // make -j testNanoVDB && ./unittest/testNanoVDB --gtest_filter="*strcpy"
 TEST_F(TestNanoVDB, strcpy)
 {

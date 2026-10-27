@@ -109,6 +109,24 @@ inline void parseHostGridChain(const GridData* head, uint64_t bytes, std::vector
     }
 }
 
+/// @brief Throws unless the read of the raw grid header @a data, expected to be grid #@a index of a
+///        chain, succeeded on @a is and holds that grid: a raw buffer that ends, or holds something
+///        else, before all the grids its first header counts is truncated or corrupt.
+inline void checkNextRawGrid(const std::istream& is, const GridData& data, uint32_t index)
+{
+    if (!is || !data.isValid() || data.mGridIndex != index)
+        throw std::runtime_error("GridHandle::read: the raw grid buffer is truncated or corrupt before grid #" + std::to_string(index));
+}
+
+/// @brief Throws unless @a is, positioned at the start of a raw grid of @a gridSize bytes, holds all
+///        of them, so a buffer cut short inside its last grid is not taken for a whole one.
+inline void checkRawGridEnd(std::istream& is, uint64_t gridSize)
+{
+    is.seekg(std::streamoff(gridSize) - 1, std::ios::cur);
+    char last;
+    if (!is.read(&last, 1)) throw std::runtime_error("GridHandle::read: the raw grid buffer is truncated");
+}
+
 }// namespace detail
 
 /// @brief This class serves to manage a buffer containing one or more NanoVDB Grids.
@@ -577,13 +595,16 @@ void GridHandle<BufferT>::read(std::istream& is, const BufferT& pool)
     if (is && data.isValid()) {
         uint64_t size = data.mGridSize, sum = 0u;
         while(data.mGridIndex + 1u < data.mGridCount) {// loop over remaining raw grids in stream
+            const uint32_t next = data.mGridIndex + 1u;
             is.seekg(data.mGridSize - sizeof(GridData), std::ios::cur);// skip grid
             is.read((char*)&data, sizeof(GridData));
+            detail::checkNextRawGrid(is, data, next);
             sum += data.mGridSize;
         }
         auto buffer = detail::createHostStorage(size + sum, pool);
         is.seekg(start);// rewind to the start of the raw buffer
         is.read((char*)(buffer.data()), buffer.size());
+        if (!is) throw std::runtime_error("GridHandle::read: the raw grid buffer is truncated");
         *this = GridHandle(std::move(buffer));
     } else {
         is.clear();// a stream shorter than one GridData is left failed, so a seek alone would not rewind it
@@ -603,12 +624,15 @@ void GridHandle<BufferT>::read(std::istream& is, uint32_t n, const BufferT& pool
     if (is && data.isValid()) {
         if (n>=data.mGridCount) throw std::runtime_error("stream does not contain a #" + std::to_string(n) + " grid");
         while(data.mGridIndex != n) {
+            const uint32_t next = data.mGridIndex + 1u;
             is.seekg(data.mGridSize - sizeof(GridData), std::ios::cur);// skip grid
             is.read((char*)&data, sizeof(GridData));
+            detail::checkNextRawGrid(is, data, next);
         }
         auto buffer = detail::createHostStorage(data.mGridSize, pool);
         is.seekg(-sizeof(GridData), std::ios::cur);// rewind
         is.read((char*)(buffer.data()), data.mGridSize);
+        if (!is) throw std::runtime_error("GridHandle::read: the raw grid buffer is truncated");
         tools::updateGridCount((GridData*)buffer.data(), 0u, 1u);
         *this = GridHandle(std::move(buffer));
     } else {
@@ -631,15 +655,20 @@ void GridHandle<BufferT>::read(std::istream& is, const std::string &gridName, co
     is.clear();// a stream shorter than one GridData is left failed, so a seek alone would not rewind it
     is.seekg(start);// rewind
     if (isRaw) {
-        uint32_t n = 0;
-        while(data.mGridName != gridName && n++ < data.mGridCount) {
+        while(data.mGridName != gridName) {
+            const uint32_t next = data.mGridIndex + 1u;
+            if (next >= data.mGridCount) {// every grid's header was checked: absent, if the last grid is whole
+                detail::checkRawGridEnd(is, data.mGridSize);
+                throw GridNotFoundError("No raw grid named \""+gridName+"\"");
+            }
             is.seekg(data.mGridSize, std::ios::cur);// skip grid
             is.read((char*)&data, byteSize);// read sizeof(GridData) bytes
+            detail::checkNextRawGrid(is, data, next);
             is.seekg(-byteSize, std::ios::cur);// rewind
         }
-        if (n>data.mGridCount) throw GridNotFoundError("No raw grid named \""+gridName+"\"");
         auto buffer = detail::createHostStorage(data.mGridSize, pool);
         is.read((char*)(buffer.data()), data.mGridSize);
+        if (!is) throw std::runtime_error("GridHandle::read: the raw grid buffer is truncated");
         tools::updateGridCount((GridData*)buffer.data(), 0u, 1u);
         *this = GridHandle(std::move(buffer));
     } else {
