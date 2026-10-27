@@ -115,12 +115,14 @@ __hostdev__ char* checkGrid(const NanoGrid<ValueT> *grid, char *error, CheckMode
     }
     if (mode == CheckMode::Half) return error;
 
-    // check nodes
+    // check nodes, where a level without nodes, e.g. in an empty grid, has no first node
     const bool test = grid->isBreadthFirst();
     auto *n0 = tree.template getFirstNode<0>();
     auto *n1 = tree.template getFirstNode<1>();
     auto *n2 = tree.template getFirstNode<2>();
-    const void *bounds[3][2] = {{n0, util::PtrAdd(n0, grid->gridSize())}, {n1, n0}, {n2, n1}};
+    const void *end0 = util::PtrAdd(n0 ? (const void*)n0 : (const void*)grid, grid->gridSize());
+    const void *end1 = n0 ? (const void*)n0 : end0, *end2 = n1 ? (const void*)n1 : end1;
+    const void *bounds[3][2] = {{n0, end0}, {n1, end1}, {n2, end2}};
 
     auto check = [&](const void *ptr, int level) -> bool {
         if (ptr==nullptr) {

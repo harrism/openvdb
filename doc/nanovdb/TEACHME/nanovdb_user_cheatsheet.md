@@ -66,6 +66,9 @@ find_package(nanovdb CONFIG REQUIRED)
 target_link_libraries(my_app PRIVATE nanovdb::nanovdb)
 ```
 
+The CUDA headers (`*.cuh`) need nvcc's `--extended-lambda` flag; host headers
+included in a `.cu` file compile without it.
+
 ---
 
 ## Build types (`NanoGrid<T>`)
@@ -333,6 +336,10 @@ auto h = nanovdb::tools::createLevelSetSphere<float>(
     /*radius=*/10.0, /*center=*/{0,0,0}, /*voxelSize=*/0.1);
 // also: createLevelSetTorus, createLevelSetBox, createFogVolumeSphere, ...
 ```
+
+The sphere's narrow band keeps a voxel when |distance - radius| < halfWidth
+(voxel units, evaluated in the grid's value type); voxels within rounding of
+that edge may fall either way. A radius below 1.5 voxels gives no active voxels.
 
 ---
 

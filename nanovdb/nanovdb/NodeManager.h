@@ -315,9 +315,10 @@ NodeManagerHandle<BufferT> createNodeManager(const NanoGrid<BuildT> &grid,
 
     if (NodeManager<BuildT>::isLinear(grid)) {
         data->mLinear = uint8_t(1u);
-        data->mOff[0] = util::PtrDiff(grid.tree().template getFirstNode<0>(), &grid);
-        data->mOff[1] = util::PtrDiff(grid.tree().template getFirstNode<1>(), &grid);
-        data->mOff[2] = util::PtrDiff(grid.tree().template getFirstNode<2>(), &grid);
+        const auto &tree = grid.tree();// a level without nodes, e.g. in an empty grid, has no first node
+        data->mOff[0] = tree.nodeCount(0) ? util::PtrDiff(tree.template getFirstNode<0>(), &grid) : 0;
+        data->mOff[1] = tree.nodeCount(1) ? util::PtrDiff(tree.template getFirstNode<1>(), &grid) : 0;
+        data->mOff[2] = tree.nodeCount(2) ? util::PtrDiff(tree.template getFirstNode<2>(), &grid) : 0;
     } else {
         int64_t *ptr0 = data->mPtr[0] = reinterpret_cast<int64_t*>(data + 1);
         int64_t *ptr1 = data->mPtr[1] = data->mPtr[0] + grid.tree().nodeCount(0);
@@ -339,8 +340,9 @@ NodeManagerHandle<BufferT> createNodeManager(const NanoGrid<BuildT> &grid,
 
 } // namespace nanovdb
 
-#if defined(__CUDACC__)
+// The CUDA NodeManager needs nvcc's --extended-lambda, so host-only code in a .cu file compiles without it
+#if defined(__CUDACC__) && defined(__CUDACC_EXTENDED_LAMBDA__)
 #include <nanovdb/cuda/NodeManager.cuh>
-#endif// defined(__CUDACC__)
+#endif// defined(__CUDACC__) && defined(__CUDACC_EXTENDED_LAMBDA__)
 
 #endif // NANOVDB_NODEMANAGER_H_HAS_BEEN_INCLUDED

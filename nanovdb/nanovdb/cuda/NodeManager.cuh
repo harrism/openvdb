@@ -17,6 +17,10 @@
 #ifndef NANOVDB_CUDA_NODE_MANAGER_CUH_HAS_BEEN_INCLUDED
 #define NANOVDB_CUDA_NODE_MANAGER_CUH_HAS_BEEN_INCLUDED
 
+#if !defined(__CUDACC_EXTENDED_LAMBDA__)
+#error "nanovdb/cuda/NodeManager.cuh, and the NanoVDB CUDA headers that include it, require nvcc's --extended-lambda flag"
+#endif
+
 #include <nanovdb/util/cuda/Util.h>// for cuda::lambdaKernel
 #include <nanovdb/cuda/Buffer.h>// for the resource-aware buffers below
 #include <nanovdb/cuda/DeviceBuffer.h>
@@ -67,9 +71,10 @@ createNodeManager(const NanoGrid<BuildT> *d_grid,
         auto &tree = d_grid->tree();
         if (NodeManager<BuildT>::FIXED_SIZE && d_grid->isBreadthFirst()) {
             d_data->mLinear = uint8_t(1u);
-            d_data->mOff[0] = util::PtrDiff(tree.template getFirstNode<0>(), d_grid);
-            d_data->mOff[1] = util::PtrDiff(tree.template getFirstNode<1>(), d_grid);
-            d_data->mOff[2] = util::PtrDiff(tree.template getFirstNode<2>(), d_grid);
+            // a level without nodes, e.g. in an empty grid, has no first node
+            d_data->mOff[0] = tree.nodeCount(0) ? util::PtrDiff(tree.template getFirstNode<0>(), d_grid) : 0;
+            d_data->mOff[1] = tree.nodeCount(1) ? util::PtrDiff(tree.template getFirstNode<1>(), d_grid) : 0;
+            d_data->mOff[2] = tree.nodeCount(2) ? util::PtrDiff(tree.template getFirstNode<2>(), d_grid) : 0;
         } else {
             *d_size += sizeof(uint64_t)*tree.totalNodeCount();
         }
@@ -139,9 +144,10 @@ createNodeManager(const NanoGrid<BuildT> *d_grid,
         auto &tree = d_grid->tree();
         if (NodeManager<BuildT>::FIXED_SIZE && d_grid->isBreadthFirst()) {
             d_data->mLinear = uint8_t(1u);
-            d_data->mOff[0] = util::PtrDiff(tree.template getFirstNode<0>(), d_grid);
-            d_data->mOff[1] = util::PtrDiff(tree.template getFirstNode<1>(), d_grid);
-            d_data->mOff[2] = util::PtrDiff(tree.template getFirstNode<2>(), d_grid);
+            // a level without nodes, e.g. in an empty grid, has no first node
+            d_data->mOff[0] = tree.nodeCount(0) ? util::PtrDiff(tree.template getFirstNode<0>(), d_grid) : 0;
+            d_data->mOff[1] = tree.nodeCount(1) ? util::PtrDiff(tree.template getFirstNode<1>(), d_grid) : 0;
+            d_data->mOff[2] = tree.nodeCount(2) ? util::PtrDiff(tree.template getFirstNode<2>(), d_grid) : 0;
         } else {
             *d_size += sizeof(uint64_t)*tree.totalNodeCount();
         }

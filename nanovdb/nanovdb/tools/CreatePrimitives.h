@@ -43,6 +43,13 @@ namespace tools {// ===================================================
 ///          Fp16 and FpN overloads take an extra @c ditherOn argument, and the
 ///          FpN overload also takes a @c tolerance argument that sets the
 ///          global error tolerance.
+///
+/// @note    A voxel is in the narrow band, and so active, when |distance - radius| < halfWidth,
+///          with its distance to the center and the radius in voxel units, evaluated in the
+///          grid's value type (float for Fp4, Fp8, Fp16 and FpN). Voxels within rounding error
+///          of the band's edge may therefore fall on either side of it, e.g. a float and a
+///          double sphere with the same arguments can differ there. A sphere whose radius is
+///          below 1.5 voxels gives a grid with no active voxels.
 template<typename BuildT = float, typename BufferT = HostBuffer>
 typename util::enable_if<util::is_same<BuildT, float,  double>::value, GridHandle<BufferT>>::type
 createLevelSetSphere(double              radius = 100.0,

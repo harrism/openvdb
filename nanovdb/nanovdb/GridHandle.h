@@ -745,8 +745,32 @@ mergeGrids(const VectorT<GridHandle<BufferT>> &handles, const BufferT* pool = nu
 
 } // namespace nanovdb
 
-#if defined(__CUDACC__)
+// The CUDA GridHandle needs nvcc's --extended-lambda, so host-only code in a .cu file compiles without it
+#if defined(__CUDACC__) && defined(__CUDACC_EXTENDED_LAMBDA__)
 #include <nanovdb/cuda/GridHandle.cuh>
-#endif// defined(__CUDACC__)
+#elif defined(__CUDACC__)
+namespace nanovdb {
+
+// Without --extended-lambda the constructors from device buffers, defined in nanovdb/cuda/GridHandle.cuh,
+// are unavailable: these definitions stop a .cu file that uses one at compile time, naming the flag,
+// instead of leaving an undefined reference for the linker.
+template<typename BufferT>
+template<typename T, typename util::enable_if<BufferTraits<T>::hasDeviceDual, int>::type>
+GridHandle<BufferT>::GridHandle(T&& buffer)
+    : mBuffer(std::move(buffer))
+{
+    static_assert(sizeof(T) == 0, "nanovdb: GridHandle with a device buffer needs nvcc's --extended-lambda flag (cuda/GridHandle.cuh)");
+}
+
+template<typename BufferT>
+template<typename T, typename util::enable_if<BufferHasDeviceSingle<T>::value, int>::type, typename>
+GridHandle<BufferT>::GridHandle(T&& buffer)
+    : mBuffer(std::move(buffer))
+{
+    static_assert(sizeof(T) == 0, "nanovdb: GridHandle with a device buffer needs nvcc's --extended-lambda flag (cuda/GridHandle.cuh)");
+}
+
+} // namespace nanovdb
+#endif// defined(__CUDACC__) && defined(__CUDACC_EXTENDED_LAMBDA__)
 
 #endif // NANOVDB_GRID_HANDLE_H_HAS_BEEN_INCLUDED

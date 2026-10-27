@@ -3353,6 +3353,53 @@ TEST(TestNanoVDBCUDA, NodeManager)
     }
 }// NodeManager
 
+/// @brief Copies the leaf, lower and upper node counts of a device NodeManager into @c result[0..2],
+///        and into @c result[3] how many of its first lower and upper nodes differ from the tree's
+template<typename BuildT>
+void nodeManagerCounts(const nanovdb::NodeManager<BuildT> *d_mgr, uint64_t result[4])
+{
+    uint64_t *d_result;
+    cudaCheck(cudaMalloc((void**)&d_result, 4*sizeof(uint64_t)));
+    nanovdb::util::cuda::lambdaKernel<<<1, 1>>>(1, [=] __device__ (size_t) {
+        const auto &tree = d_mgr->tree();
+        d_result[0] = d_mgr->leafCount();
+        d_result[1] = d_mgr->lowerCount();
+        d_result[2] = d_mgr->upperCount();
+        d_result[3] = 0;
+        if (d_mgr->lowerCount() > 0 && &d_mgr->lower(0) != tree.getFirstLower()) ++d_result[3];
+        if (d_mgr->upperCount() > 0 && &d_mgr->upper(0) != tree.getFirstUpper()) ++d_result[3];
+    });
+    cudaCheck(cudaMemcpy(result, d_result, 4*sizeof(uint64_t), cudaMemcpyDeviceToHost));
+    cudaCheck(cudaFree(d_result));
+}// nodeManagerCounts
+
+TEST(TestNanoVDBCUDA, NodeManager_NoLeafNodes)
+{
+    using SrcGridT = nanovdb::tools::build::Grid<float>;
+    using BufferT = nanovdb::cuda::DeviceBuffer;
+    SrcGridT emptyGrid(1.0f, "empty", nanovdb::GridClass::LevelSet);// no nodes at all
+    SrcGridT tileGrid(0.0f, "tile");// internal nodes but no leaf nodes
+    tileGrid.tree().root().addTile<1>(nanovdb::Coord(0), 1.0f, true);
+    for (auto *srcGrid : {&emptyGrid, &tileGrid}) {
+        auto handle = nanovdb::tools::createNanoGrid<SrcGridT, float, BufferT>(*srcGrid);
+        auto *grid = handle.grid<float>();
+        ASSERT_TRUE(grid);
+        EXPECT_EQ(0u, grid->tree().nodeCount(0));
+        handle.deviceUpload();
+        auto *d_grid = handle.deviceGrid<float>();
+        ASSERT_TRUE(d_grid);
+        auto mgrHandle = nanovdb::cuda::createNodeManager(d_grid);
+        auto *d_mgr = mgrHandle.deviceMgr<float>();
+        ASSERT_TRUE(d_mgr);
+        uint64_t result[4];
+        nodeManagerCounts(d_mgr, result);
+        EXPECT_EQ(0u, result[0]);
+        EXPECT_EQ(grid->tree().nodeCount(1), result[1]);
+        EXPECT_EQ(grid->tree().nodeCount(2), result[2]);
+        EXPECT_EQ(0u, result[3]);
+    }
+}// NodeManager_NoLeafNodes
+
 
 TEST(TestNanoVDBCUDA, GridStats_UnifiedBuffer)
 {
@@ -3657,6 +3704,24 @@ TEST(TestNanoVDBCUDA, cudaIsValid_HostBuffer)
     GridT *grid = handle.grid<float>();
     EXPECT_TRUE(grid);
 }// cudaIsValid_HostBuffer
+
+TEST(TestNanoVDBCUDA, cudaIsValid_NoLeafNodes)
+{
+    using SrcGridT = nanovdb::tools::build::Grid<float>;
+    using BufferT = nanovdb::cuda::DeviceBuffer;
+    SrcGridT emptyGrid(1.0f, "empty", nanovdb::GridClass::LevelSet);// no nodes at all
+    SrcGridT tileGrid(0.0f, "tile");// internal nodes but no leaf nodes
+    tileGrid.tree().root().addTile<1>(nanovdb::Coord(0), 1.0f, true);
+    for (auto *srcGrid : {&emptyGrid, &tileGrid}) {
+        auto handle = nanovdb::tools::createNanoGrid<SrcGridT, float, BufferT>(*srcGrid);
+        EXPECT_EQ(0u, handle.grid<float>()->tree().nodeCount(0));
+        handle.deviceUpload();
+        auto *d_grid = handle.deviceGrid<float>();
+        ASSERT_TRUE(d_grid);
+        EXPECT_TRUE(nanovdb::tools::cuda::isValid(d_grid, nanovdb::CheckMode::Half, true));
+        EXPECT_TRUE(nanovdb::tools::cuda::isValid(d_grid, nanovdb::CheckMode::Full, true));
+    }
+}// cudaIsValid_NoLeafNodes
 
 TEST(TestNanoVDBCUDA, overSizedDeviceBuffer)
 {
