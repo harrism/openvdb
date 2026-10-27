@@ -3515,6 +3515,24 @@ TEST(TestNanoVDBCUDA, cudaIsValid_HostBuffer)
     EXPECT_TRUE(grid);
 }// cudaIsValid_HostBuffer
 
+TEST(TestNanoVDBCUDA, cudaIsValid_NoLeafNodes)
+{
+    using SrcGridT = nanovdb::tools::build::Grid<float>;
+    using BufferT = nanovdb::cuda::DeviceBuffer;
+    SrcGridT emptyGrid(1.0f, "empty", nanovdb::GridClass::LevelSet);// no nodes at all
+    SrcGridT tileGrid(0.0f, "tile");// internal nodes but no leaf nodes
+    tileGrid.tree().root().addTile<1>(nanovdb::Coord(0), 1.0f, true);
+    for (auto *srcGrid : {&emptyGrid, &tileGrid}) {
+        auto handle = nanovdb::tools::createNanoGrid<SrcGridT, float, BufferT>(*srcGrid);
+        EXPECT_EQ(0u, handle.grid<float>()->tree().nodeCount(0));
+        handle.deviceUpload();
+        auto *d_grid = handle.deviceGrid<float>();
+        ASSERT_TRUE(d_grid);
+        EXPECT_TRUE(nanovdb::tools::cuda::isValid(d_grid, nanovdb::CheckMode::Half, true));
+        EXPECT_TRUE(nanovdb::tools::cuda::isValid(d_grid, nanovdb::CheckMode::Full, true));
+    }
+}// cudaIsValid_NoLeafNodes
+
 TEST(TestNanoVDBCUDA, overSizedDeviceBuffer)
 {
     // create a grid in a host buffer that exactly fits the grid

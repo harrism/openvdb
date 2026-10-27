@@ -5846,6 +5846,25 @@ TEST_F(TestNanoVDB, GridValidator)
     EXPECT_FALSE(nanovdb::tools::isValid(grid, nanovdb::CheckMode::Full, false));
 } // GridValidator
 
+TEST_F(TestNanoVDB, GridValidator_NoLeafNodes)
+{
+    using SrcGridT = nanovdb::tools::build::Grid<float>;
+    SrcGridT emptyGrid(1.0f, "empty", nanovdb::GridClass::LevelSet);// no nodes at all
+    SrcGridT tileGrid(0.0f, "tile");// internal nodes but no leaf nodes
+    tileGrid.tree().root().addTile<1>(nanovdb::Coord(0), 1.0f, true);
+    for (auto *srcGrid : {&emptyGrid, &tileGrid}) {
+        auto handle = nanovdb::tools::createNanoGrid(*srcGrid);
+        auto *grid = handle.grid<float>();
+        ASSERT_TRUE(grid);
+        EXPECT_EQ(0u, grid->tree().nodeCount(0));
+        char error[100];
+        for (auto mode : {nanovdb::CheckMode::Half, nanovdb::CheckMode::Full}) {
+            EXPECT_TRUE(nanovdb::util::empty(nanovdb::tools::checkGrid(grid, error, mode))) << error;
+            EXPECT_TRUE(nanovdb::tools::isValid(grid, mode, true));
+        }
+    }
+} // GridValidator_NoLeafNodes
+
 TEST_F(TestNanoVDB, RandomReadAccessorGet)
 {
     const float background = 0.0f;
