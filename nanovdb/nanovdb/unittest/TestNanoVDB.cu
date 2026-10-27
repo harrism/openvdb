@@ -2817,6 +2817,61 @@ TEST(TestNanoVDBCUDA, cudaIndexToGridFromMultiGridSource)
     cudaCheck(cudaFree(d_values));
 }// cudaIndexToGridFromMultiGridSource
 
+// indexToGrid returns a valid grid of the value type, which can be written to file and read back: its header
+// records its own size, a class valid for its type and no blind data, though the source carries blind data
+TEST(TestNanoVDBCUDA, cudaIndexToGridWriteRead)
+{
+    using BufferT = nanovdb::cuda::DeviceBuffer;
+    const std::string name(300, 'a');// a long grid name is stored as blind data
+    auto floatHdl = nanovdb::tools::createLevelSetSphere<float, nanovdb::HostBuffer>(20, nanovdb::Vec3d(0), 1, 3, nanovdb::Vec3d(0), name);
+    auto *floatGrid = floatHdl.grid<float>();
+    ASSERT_TRUE(floatGrid);
+    auto idxHdl = nanovdb::tools::createNanoGrid<nanovdb::FloatGrid, nanovdb::ValueOnIndex, BufferT>(*floatGrid, 1u);// one channel, with stats
+    auto *idxGrid = idxHdl.grid<nanovdb::ValueOnIndex>();
+    ASSERT_TRUE(idxGrid);
+    EXPECT_EQ(nanovdb::GridClass::IndexGrid, idxGrid->gridClass());
+    EXPECT_EQ(2u, idxGrid->blindDataCount());// the grid name and the channel
+    int channel = -1;
+    for (uint32_t n = 0; n < idxGrid->blindDataCount(); ++n) {
+        if (idxGrid->blindMetaData(n).mDataClass == nanovdb::GridBlindDataClass::ChannelArray) channel = n;
+    }
+    ASSERT_LE(0, channel);
+    const ptrdiff_t channelOffset = nanovdb::util::PtrDiff(idxGrid->getBlindData<float>(channel), idxGrid);
+    idxHdl.deviceUpload();
+    auto *d_idxGrid = idxHdl.deviceGrid<nanovdb::ValueOnIndex>();
+    auto *d_values = nanovdb::util::PtrAdd<float>(d_idxGrid, channelOffset);
+
+    auto handle = nanovdb::tools::cuda::indexToGrid<float>(d_idxGrid, d_values);
+    handle.deviceDownload();
+    auto *gridData = handle.gridData();
+    ASSERT_TRUE(gridData);
+    ASSERT_EQ(handle.bufferSize(), gridData->mGridSize);// else writing it truncates the grid
+    EXPECT_EQ(nanovdb::GridType::Float, gridData->mGridType);
+    EXPECT_TRUE(nanovdb::isValid(gridData->mGridType, gridData->mGridClass));
+    EXPECT_EQ(0u, gridData->mBlindMetadataCount);
+    EXPECT_EQ(gridData->mGridSize, gridData->mBlindMetadataOffset);
+    ASSERT_TRUE(handle.grid<float>());
+    EXPECT_EQ(name.substr(0, nanovdb::GridData::MaxNameSize - 1), std::string(handle.grid<float>()->gridName()));
+
+    const std::string fileName("data/cuda_index_to_grid.nvdb");
+    nanovdb::io::writeGrid(fileName, handle);
+    auto readHdl = nanovdb::io::readGrid(fileName);
+    auto *grid = readHdl.grid<float>();
+    ASSERT_TRUE(grid);
+    EXPECT_EQ(readHdl.bufferSize(), grid->gridSize());
+    EXPECT_TRUE(nanovdb::tools::isValid(grid, nanovdb::CheckMode::Full, true));
+    EXPECT_EQ(floatGrid->activeVoxelCount(), grid->activeVoxelCount());
+    auto srcAcc = floatGrid->getAccessor();
+    auto dstAcc = grid->getAccessor();
+    uint64_t wrong = 0;
+    const auto bbox = floatGrid->indexBBox().expandBy(8);
+    for (auto it = bbox.begin(); it; ++it) {
+        const bool active = srcAcc.isActive(*it);// a ValueOnIndex grid indexes active values only
+        wrong += active != dstAcc.isActive(*it) || (active && srcAcc.getValue(*it) != dstAcc.getValue(*it));
+    }
+    EXPECT_EQ(0u, wrong);
+}// cudaIndexToGridWriteRead
+
 TEST(TestNanoVDBCUDA, testGridHandleCopy)
 {
     auto cudaHandle = nanovdb::tools::createLevelSetSphere<float, nanovdb::cuda::DeviceBuffer>(100);

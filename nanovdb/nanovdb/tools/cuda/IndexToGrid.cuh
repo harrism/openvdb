@@ -162,7 +162,12 @@ __global__ void processGridTreeRootKernel(IndexToGridNodeAccessor<SrcBuildT> *no
 
     // process Grid
     *dstGrid.data() = *srcGrid.data();
+    dstGrid.mGridSize = nodeAcc->size;
+    dstGrid.mGridClass = toGridClass<DstBuildT>();// GridClass::IndexGrid is invalid for DstBuildT
     dstGrid.mGridType = toGridType<DstBuildT>();
+    dstGrid.mFlags.setMaskOff(GridFlags::HasLongGridName);// blind data, such as a long grid name, is not copied
+    dstGrid.mBlindMetadataOffset = nodeAcc->meta;
+    dstGrid.mBlindMetadataCount = 0u;
     dstGrid.mData1 = 0u;
     dstGrid.mGridIndex = 0u; // Possibly overwriting input; returned grid has batch size 1
     dstGrid.mGridCount = 1u;
