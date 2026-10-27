@@ -4495,6 +4495,45 @@ TEST_F(TestNanoVDB, NodeManager)
     }
 } // NodeManager
 
+TEST_F(TestNanoVDB, NodeManager_NoLeafNodes)
+{
+    using SrcGridT = nanovdb::tools::build::Grid<float>;
+    { // empty grid, i.e. no nodes at all
+        SrcGridT srcGrid(1.0f, "empty", nanovdb::GridClass::LevelSet);
+        auto handle = nanovdb::tools::createNanoGrid(srcGrid);
+        auto* dstGrid = handle.grid<float>();
+        ASSERT_TRUE(dstGrid);
+        EXPECT_EQ(0u, dstGrid->tree().totalNodeCount());
+        auto nodeMgrHandle = nanovdb::createNodeManager(*dstGrid);
+        auto *nodeMgr = nodeMgrHandle.mgr<float>();
+        ASSERT_TRUE(nodeMgr);
+        EXPECT_TRUE(nodeMgr->isLinear());
+        EXPECT_EQ(dstGrid, &nodeMgr->grid());
+        EXPECT_EQ(0u, nodeMgr->leafCount());
+        EXPECT_EQ(0u, nodeMgr->lowerCount());
+        EXPECT_EQ(0u, nodeMgr->upperCount());
+    }
+    { // an active tile in a lower internal node, i.e. internal nodes but no leaf nodes
+        SrcGridT srcGrid(0.0f, "tile");
+        srcGrid.tree().root().addTile<1>(nanovdb::Coord(0), 1.0f, true);
+        auto handle = nanovdb::tools::createNanoGrid(srcGrid);
+        auto* dstGrid = handle.grid<float>();
+        ASSERT_TRUE(dstGrid);
+        EXPECT_EQ(0u, dstGrid->tree().nodeCount(0));
+        EXPECT_EQ(1u, dstGrid->tree().nodeCount(1));
+        EXPECT_EQ(1u, dstGrid->tree().nodeCount(2));
+        auto nodeMgrHandle = nanovdb::createNodeManager(*dstGrid);
+        auto *nodeMgr = nodeMgrHandle.mgr<float>();
+        ASSERT_TRUE(nodeMgr);
+        EXPECT_TRUE(nodeMgr->isLinear());
+        EXPECT_EQ(0u, nodeMgr->leafCount());
+        EXPECT_EQ(1u, nodeMgr->lowerCount());
+        EXPECT_EQ(1u, nodeMgr->upperCount());
+        EXPECT_EQ(dstGrid->tree().getFirstLower(), &nodeMgr->lower(0));
+        EXPECT_EQ(dstGrid->tree().getFirstUpper(), &nodeMgr->upper(0));
+    }
+} // NodeManager_NoLeafNodes
+
 TEST_F(TestNanoVDB, GridBuilderBasicDense)
 {
     { // dense functor

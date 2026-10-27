@@ -67,9 +67,10 @@ createNodeManager(const NanoGrid<BuildT> *d_grid,
         auto &tree = d_grid->tree();
         if (NodeManager<BuildT>::FIXED_SIZE && d_grid->isBreadthFirst()) {
             d_data->mLinear = uint8_t(1u);
-            d_data->mOff[0] = util::PtrDiff(tree.template getFirstNode<0>(), d_grid);
-            d_data->mOff[1] = util::PtrDiff(tree.template getFirstNode<1>(), d_grid);
-            d_data->mOff[2] = util::PtrDiff(tree.template getFirstNode<2>(), d_grid);
+            // a level without nodes, e.g. in an empty grid, has no first node
+            d_data->mOff[0] = tree.nodeCount(0) ? util::PtrDiff(tree.template getFirstNode<0>(), d_grid) : 0;
+            d_data->mOff[1] = tree.nodeCount(1) ? util::PtrDiff(tree.template getFirstNode<1>(), d_grid) : 0;
+            d_data->mOff[2] = tree.nodeCount(2) ? util::PtrDiff(tree.template getFirstNode<2>(), d_grid) : 0;
         } else {
             *d_size += sizeof(uint64_t)*tree.totalNodeCount();
         }
@@ -139,9 +140,10 @@ createNodeManager(const NanoGrid<BuildT> *d_grid,
         auto &tree = d_grid->tree();
         if (NodeManager<BuildT>::FIXED_SIZE && d_grid->isBreadthFirst()) {
             d_data->mLinear = uint8_t(1u);
-            d_data->mOff[0] = util::PtrDiff(tree.template getFirstNode<0>(), d_grid);
-            d_data->mOff[1] = util::PtrDiff(tree.template getFirstNode<1>(), d_grid);
-            d_data->mOff[2] = util::PtrDiff(tree.template getFirstNode<2>(), d_grid);
+            // a level without nodes, e.g. in an empty grid, has no first node
+            d_data->mOff[0] = tree.nodeCount(0) ? util::PtrDiff(tree.template getFirstNode<0>(), d_grid) : 0;
+            d_data->mOff[1] = tree.nodeCount(1) ? util::PtrDiff(tree.template getFirstNode<1>(), d_grid) : 0;
+            d_data->mOff[2] = tree.nodeCount(2) ? util::PtrDiff(tree.template getFirstNode<2>(), d_grid) : 0;
         } else {
             *d_size += sizeof(uint64_t)*tree.totalNodeCount();
         }
