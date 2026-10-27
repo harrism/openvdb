@@ -30,6 +30,16 @@
 
 namespace nanovdb {
 
+/// @brief Thrown by io::readGrid(file or stream, gridName) and GridHandle::read(stream, gridName)
+///        when no grid of that name is there. It derives from std::runtime_error, which the same
+///        calls throw for a file or stream that cannot be read, so catch it first to tell an
+///        absent grid from an unreadable file.
+class GridNotFoundError : public std::runtime_error
+{
+public:
+    using std::runtime_error::runtime_error;
+};// GridNotFoundError
+
 // --------------------------> GridHandle <------------------------------------
 
 struct GridHandleMetaData {uint64_t offset, size; GridType gridType;};
@@ -627,7 +637,7 @@ void GridHandle<BufferT>::read(std::istream& is, const std::string &gridName, co
             is.read((char*)&data, byteSize);// read sizeof(GridData) bytes
             is.seekg(-byteSize, std::ios::cur);// rewind
         }
-        if (n>data.mGridCount) throw std::runtime_error("No raw grid named \""+gridName+"\"");
+        if (n>data.mGridCount) throw GridNotFoundError("No raw grid named \""+gridName+"\"");
         auto buffer = detail::createHostStorage(data.mGridSize, pool);
         is.read((char*)(buffer.data()), data.mGridSize);
         tools::updateGridCount((GridData*)buffer.data(), 0u, 1u);

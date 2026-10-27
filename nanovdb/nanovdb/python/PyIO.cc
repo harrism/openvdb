@@ -152,6 +152,10 @@ void defineIOModule(nb::module_& m)
         //     return std::string(str);
         // });
 
+    // readGrid by name raises GridNotFoundError, a RuntimeError, for an absent grid, and RuntimeError
+    // for a file that cannot be read.
+    nb::exception<GridNotFoundError>(m, "GridNotFoundError", PyExc_RuntimeError);
+
     defineFileGridMetaData(m);
     defineHostReadWriteGrid(m);
 #ifdef NANOVDB_USE_CUDA

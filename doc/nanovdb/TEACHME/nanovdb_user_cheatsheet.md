@@ -92,9 +92,11 @@ namespace io = nanovdb::io;
 
 auto h  = io::readGrid("file.nvdb");                 // first grid
 auto h2 = io::readGrid("file.nvdb", 2);              // grid #2 (0-based)
-auto hN = io::readGrid("file.nvdb", "density");      // by name
+auto hN = io::readGrid("file.nvdb", "density");      // by name; absent: throws nanovdb::GridNotFoundError
+                                                     // (a std::runtime_error, as for an unreadable file);
+                                                     // reads only that grid
 auto hAll = io::readGrid("file.nvdb", -1);           // all → one handle
-auto v  = io::readGrids("file.nvdb");                // vector<handle>, one per segment
+auto v  = io::readGrids("file.nvdb");                // vector<handle>, one per segment; reads, so checks, every grid
 
 io::writeGrid("out.nvdb", h);                        // single
 io::writeGrid("out.nvdb", h, io::Codec::BLOSC);      // compressed

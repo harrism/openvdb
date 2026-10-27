@@ -296,7 +296,9 @@ for (uint32_t i = 0; i < hAll.gridCount(); ++i) {
     }
 }
 
-// Read by name
+// Read by name. An absent name throws nanovdb::GridNotFoundError (older versions returned an
+// empty handle); a file that cannot be read throws another std::runtime_error, so catch
+// GridNotFoundError first. Only this grid is read: readGrids checks that the whole file is readable.
 auto byName = nanovdb::io::readGrid("multi_grid.nvdb", "density");
 ```
 

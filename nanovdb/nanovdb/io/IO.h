@@ -100,7 +100,13 @@ GridHandle<BufferT> readGrid(const std::string& fileName, int n = 0, int verbose
 /// @param verbose specify verbosity level. Default value of zero means quiet.
 /// @param buffer  optional buffer used for memory allocation
 /// @return return a single GridHandle containing the grid with the specific name
-/// @throw will throw a std::runtime_error if the file does not contain a grid with the specific name
+/// @throw GridNotFoundError if no grid of that name is there, and another std::runtime_error if
+///        the file cannot be read. Older versions of NanoVDB returned an empty handle for an
+///        absent name; code written for them that catches std::runtime_error as "unreadable file"
+///        must now catch GridNotFoundError first, or check with hasGrid before reading.
+/// @note  Only the named grid is read and checked: other grids in the file, in the same segment or
+///        later ones, are not, so a file cut short in another grid reads without complaint. Use
+///        readGrids to check that a whole file is readable.
 template<typename BufferT = HostBuffer>
 GridHandle<BufferT> readGrid(const std::string& fileName, const std::string& gridName, int verbose = 0, const BufferT& buffer = BufferT());
 
@@ -113,6 +119,8 @@ GridHandle<BufferT> readGrid(const std::string& fileName, const std::string& gri
 /// @param buffer  optional buffer used for memory allocation
 /// @return Return a vector of GridHandles each containing all grids encoded
 ///         in the same segment of the file (i.e. they where written together).
+/// @throw std::runtime_error if any grid in the file cannot be read, so it also checks that the
+///        whole file is readable (readGrid by name reads only that grid).
 template<typename BufferT = HostBuffer, template<typename...> class VecT = std::vector>
 VecT<GridHandle<BufferT>> readGrids(const std::string& fileName, int verbose = 0, const BufferT& buffer = BufferT());
 
@@ -201,6 +209,8 @@ struct Segment
 }; // Segment
 
 /// @brief Return true if the file contains a grid with the specified name
+/// @details Only the file's headers and grid metadata are read: true does not mean the grid
+///          itself is readable. Throws std::runtime_error if the headers cannot be read.
 bool hasGrid(const std::string& fileName, const std::string& gridName);
 
 /// @brief Return true if the stream contains a grid with the specified name
@@ -582,7 +592,13 @@ GridHandle<BufferT> readGrid(const std::string& fileName, int n, int verbose, co
 /// @param gridName string name of the (first) grid to be returned
 /// @param pool optional memory pool from which to allocate the grid buffer
 /// @return Return the first grid in the input stream with a specific name
-/// @throw std::runtime_error with no grid exists with the specified name
+/// @throw GridNotFoundError if no grid of that name is there, and another std::runtime_error if
+///        the file cannot be read. Older versions of NanoVDB returned an empty handle for an
+///        absent name; code written for them that catches std::runtime_error as "unreadable file"
+///        must now catch GridNotFoundError first, or check with hasGrid before reading.
+/// @note  Only the named grid is read and checked: other grids in the file, in the same segment or
+///        later ones, are not, so a file cut short in another grid reads without complaint. Use
+///        readGrids to check that a whole file is readable.
 template<typename BufferT>
 GridHandle<BufferT> readGrid(std::istream& is, const std::string& gridName, const BufferT& pool)
 {
@@ -609,7 +625,7 @@ GridHandle<BufferT> readGrid(std::istream& is, const std::string& gridName, cons
             is.seekg(seek, std::ios_base::cur); // skip forward from the current position
         }
     }
-    throw std::runtime_error("Grid name '" + gridName + "' not found in file");
+    throw GridNotFoundError("Grid name '" + gridName + "' not found in file");
 }// readGrid
 
 /// @brief Read the first grid with a specific name

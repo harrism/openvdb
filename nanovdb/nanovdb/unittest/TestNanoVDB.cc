@@ -8706,6 +8706,31 @@ TEST_F(TestNanoVDB, HostBufferZeroSizeMove)
     EXPECT_EQ(0u, assigned.size());
 }// HostBufferZeroSizeMove
 
+// readGrid by name tells an absent grid from an unreadable file: the first throws
+// GridNotFoundError, the second another std::runtime_error.
+TEST_F(TestNanoVDB, ReadGridNotFound)
+{
+    const std::string name("surface"), fileName("data/grid_not_found.nvdb"), cutName("data/grid_not_found_cut.nvdb");
+    const std::string bytes = sphereFile(name);
+    writePrefix(fileName, bytes, bytes.size());
+    writePrefix(cutName, bytes, bytes.size() - 1);
+    EXPECT_THROW(nanovdb::io::readGrid(fileName, "no-such-grid"), nanovdb::GridNotFoundError);
+    EXPECT_TRUE(nanovdb::io::readGrid(fileName, name));
+    try {
+        nanovdb::io::readGrid(cutName, name);
+        FAIL() << "readGrid read a grid from a file cut inside it";
+    } catch (const nanovdb::GridNotFoundError&) {
+        FAIL() << "readGrid reported an unreadable grid as absent";
+    } catch (const std::runtime_error&) {
+    }
+    {// a raw grid buffer, which readGrid reads without the file's framing
+        std::ostringstream os(std::ios_base::out | std::ios_base::binary);
+        nanovdb::tools::createLevelSetSphere<float>(20.0, nanovdb::Vec3d(0), 1.0, 3.0, nanovdb::Vec3d(0), name).write(os);
+        std::istringstream is(os.str(), std::ios_base::in | std::ios_base::binary);
+        EXPECT_THROW(nanovdb::io::readGrid<nanovdb::HostBuffer>(is, std::string("no-such-grid"), nanovdb::HostBuffer()), nanovdb::GridNotFoundError);
+    }
+}// ReadGridNotFound
+
 // make -j testNanoVDB && ./unittest/testNanoVDB --gtest_filter="*strcpy"
 TEST_F(TestNanoVDB, strcpy)
 {
