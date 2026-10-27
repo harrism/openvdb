@@ -441,6 +441,7 @@ inline bool Segment::read(std::istream& is)
         }
         throw std::runtime_error("An unrecoverable error in nanovdb::Segment::read:\n\tIncompatible file format: " + ss.str());
     }
+    if (header.gridCount == 0) throw std::runtime_error("Failed to read a segment: its FileHeader lists no grids");// Segment::write never writes one
     meta.resize(header.gridCount);
     for (auto& m : meta) {
         m.read(is);

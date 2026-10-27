@@ -15,6 +15,8 @@
 #include <cstdlib>
 #include <iomanip> // for std::setw, std::setfill
 #include <chrono>
+#include <cstddef> // for offsetof
+#include <cstring> // for std::memcpy
 #include <fstream>
 #include <future>
 #include <memory>
@@ -8676,6 +8678,33 @@ TEST_F(TestNanoVDB, ReadShortNonNanoVDBFileThrows)
     EXPECT_EQ(Outcome::Threw, runWithin([=]{ nanovdb::io::readGrids(fileName); }));
     EXPECT_EQ(Outcome::Threw, runWithin([=]{ nanovdb::io::hasGrid(fileName, "x"); }));
 }// ReadShortNonNanoVDBFileThrows
+
+// A segment header that claims no grids is corrupt (Segment::write refuses to write one): every
+// read throws an exception the caller can catch, also with assertions enabled.
+TEST_F(TestNanoVDB, ReadSegmentWithNoGridsThrows)
+{
+    const std::string name("surface"), fileName("data/no_grids.nvdb");
+    std::string bytes = sphereFile(name);
+    const uint16_t zero = 0u;
+    std::memcpy(&bytes[offsetof(nanovdb::io::FileHeader, gridCount)], &zero, sizeof(zero));
+    writePrefix(fileName, bytes, bytes.size());
+    EXPECT_EQ(Outcome::Threw, runWithin([=]{ nanovdb::io::readGridMetaData(fileName); }));
+    EXPECT_EQ(Outcome::Threw, runWithin([=]{ nanovdb::io::readGrid(fileName, name); }));
+    EXPECT_EQ(Outcome::Threw, runWithin([=]{ nanovdb::io::readGrid(fileName, -1); }));
+    EXPECT_EQ(Outcome::Threw, runWithin([=]{ nanovdb::io::readGrids(fileName); }));
+}// ReadSegmentWithNoGridsThrows
+
+// A zero-size buffer from HostBuffer::create can be moved and destroyed without leaving its pool
+// a dangling register entry (which failed the pool's assertion when it was destroyed).
+TEST_F(TestNanoVDB, HostBufferZeroSizeMove)
+{
+    auto buffer = nanovdb::HostBuffer::create(0);
+    EXPECT_EQ(0u, buffer.size());
+    nanovdb::HostBuffer moved(std::move(buffer));
+    nanovdb::HostBuffer assigned;
+    assigned = std::move(moved);
+    EXPECT_EQ(0u, assigned.size());
+}// HostBufferZeroSizeMove
 
 // make -j testNanoVDB && ./unittest/testNanoVDB --gtest_filter="*strcpy"
 TEST_F(TestNanoVDB, strcpy)

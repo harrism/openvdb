@@ -393,7 +393,7 @@ struct HostBuffer::Pool
         }
         buffer->mSize = size;
         const std::lock_guard<std::mutex> lock(mMutex);
-        mRegister.insert(buffer);
+        if (size > 0) mRegister.insert(buffer);// only buffers that use the pool's memory are registered, as the move operations assume
         buffer->mData = alignedFree;
         mFree = util::PtrAdd(alignedFree, size);
     }
