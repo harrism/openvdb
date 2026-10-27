@@ -37,6 +37,7 @@
 #include <nanovdb/GridHandle.h>
 #include <nanovdb/tools/GridChecksum.h>// for updateGridCount
 
+#include <algorithm> // for std::find
 #include <fstream> // for std::ifstream
 #include <iostream> // for std::cerr/cout
 #include <string> // for std::string
@@ -362,10 +363,11 @@ inline void FileGridMetaData::write(std::ostream& os) const
 inline void FileGridMetaData::read(std::istream& is)
 {
     is.read(reinterpret_cast<char*>(this), sizeof(FileMetaData));
+    if (!is || nameSize == 0) throw std::runtime_error("Failed reading FileGridMetaData");// truncated, or no room for the name's '\0'
     std::unique_ptr<char[]> tmp(new char[nameSize]);
     is.read(reinterpret_cast<char*>(tmp.get()), nameSize);
-    gridName.assign(tmp.get());
     if (!is) throw std::runtime_error("Failed reading FileGridMetaData");
+    gridName.assign(tmp.get(), std::find(tmp.get(), tmp.get() + nameSize, '\0'));// stop at the first '\0', if any
 }// FileGridMetaData::read
 
 // --------------------------> Implementations for Segment <------------------------------------
@@ -400,10 +402,13 @@ inline void Segment::write(std::ostream& os) const
 
 inline bool Segment::read(std::istream& is)
 {
+    if (!is) throw std::runtime_error("Failed to read a FileHeader: the stream is in a failed state");
     is.read(reinterpret_cast<char*>(&header), sizeof(FileHeader));
-    if (is.eof()) {// The EOF flag is only set once a read tries to read past the end of the file
-        is.clear(std::ios_base::eofbit);// clear eof flag so we can rewind and read again
+    if (is.gcount() == 0 && is.eof()) {// The EOF flag is only set once a read tries to read past the end of the file
+        is.clear(std::ios_base::eofbit);// clear the fail flag but keep eof, so we can rewind and read again
         return false;
+    } else if (!is) {// the stream ended inside the header
+        throw std::runtime_error("Failed to read a FileHeader: the file is truncated");
     }
     const MagicType magic = toMagic(header.magic);
     if (magic != MagicType::NanoVDB && magic != MagicType::NanoFile) {

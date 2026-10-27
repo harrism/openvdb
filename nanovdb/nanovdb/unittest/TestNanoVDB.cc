@@ -14,6 +14,11 @@
 #include <cmath>
 #include <cstdlib>
 #include <iomanip> // for std::setw, std::setfill
+#include <chrono>
+#include <fstream>
+#include <future>
+#include <memory>
+#include <thread>
 
 #include <nanovdb/io/IO.h>
 #include <nanovdb/tools/CreateNanoGrid.h>
@@ -8575,6 +8580,102 @@ TEST_F(TestNanoVDB, GridHandleReadMultiGridRawBuffer)
         EXPECT_TRUE(nanovdb::tools::validateChecksum(grid, nanovdb::CheckMode::Full));
     }
 }// GridHandleReadMultiGridRawBuffer
+
+namespace {
+
+/// @brief How a call on a damaged file ended: it returned, it threw, or it did not return in time.
+enum class Outcome { Returned, Threw, Hung };
+
+std::ostream& operator<<(std::ostream& os, Outcome outcome)
+{
+    return os << (outcome == Outcome::Returned ? "returned" : outcome == Outcome::Threw ? "threw" : "did not return");
+}
+
+/// @brief Runs @a f on its own thread and reports how it ended within @a seconds; a call that
+///        never returns is left running on its detached thread, so the test fails instead of
+///        hanging. @a f must capture by value, since it may outlive the caller's frame.
+template<typename F>
+Outcome runWithin(F f, int seconds = 10)
+{
+    auto outcome = std::make_shared<std::promise<Outcome>>();
+    auto future = outcome->get_future();
+    std::thread([outcome, f]() {
+        try {
+            f();
+            outcome->set_value(Outcome::Returned);
+        } catch (const std::runtime_error&) {
+            outcome->set_value(Outcome::Threw);
+        }
+    }).detach();
+    if (future.wait_for(std::chrono::seconds(seconds)) != std::future_status::ready) return Outcome::Hung;
+    return future.get();
+}
+
+/// @brief Writes the first @a size bytes of @a bytes to @a fileName.
+void writePrefix(const std::string& fileName, const std::string& bytes, size_t size)
+{
+    std::ofstream os(fileName, std::ios::out | std::ios::binary | std::ios::trunc);
+    os.write(bytes.data(), size);
+}
+
+/// @brief The bytes of a file holding one level-set sphere named @a name.
+std::string sphereFile(const std::string& name)
+{
+    std::ostringstream os(std::ios_base::out | std::ios_base::binary);
+    nanovdb::io::writeGrid(os, nanovdb::tools::createLevelSetSphere<float>(20.0, nanovdb::Vec3d(0), 1.0, 3.0, nanovdb::Vec3d(0), name), nanovdb::io::Codec::NONE);
+    return os.str();
+}
+
+}// anonymous namespace
+
+// A file cut short inside its segment's header or grid metadata is unreadable: every read
+// throws, and none hangs (each used to loop forever on a file shorter than one grid header).
+TEST_F(TestNanoVDB, ReadFileCutInHeaderThrows)
+{
+    const std::string name("surface"), fileName("data/cut_in_header.nvdb");
+    const std::string bytes = sphereFile(name);
+    const size_t metaEnd = sizeof(nanovdb::io::FileHeader) + sizeof(nanovdb::io::FileMetaData) + name.size() + 1;
+    for (size_t size : {size_t(1), size_t(8), size_t(12), size_t(15), size_t(16), size_t(100), metaEnd - 1}) {
+        SCOPED_TRACE("cut at " + std::to_string(size) + " bytes");
+        writePrefix(fileName, bytes, size);
+        EXPECT_EQ(Outcome::Threw, runWithin([=]{ nanovdb::io::readGridMetaData(fileName); }));
+        EXPECT_EQ(Outcome::Threw, runWithin([=]{ nanovdb::io::readGrid(fileName, name); }));
+        EXPECT_EQ(Outcome::Threw, runWithin([=]{ nanovdb::io::readGrid(fileName, 0); }));
+        EXPECT_EQ(Outcome::Threw, runWithin([=]{ nanovdb::io::readGrid(fileName, -1); }));
+        EXPECT_EQ(Outcome::Threw, runWithin([=]{ nanovdb::io::readGrids(fileName); }));
+        EXPECT_EQ(Outcome::Threw, runWithin([=]{ nanovdb::io::hasGrid(fileName, name); }));
+    }
+}// ReadFileCutInHeaderThrows
+
+// A file cut short inside its grid, before one grid header's worth of bytes, keeps its
+// metadata readable, but the grid itself cannot be read; no call hangs.
+TEST_F(TestNanoVDB, ReadFileCutInGridDoesNotHang)
+{
+    const std::string name("surface"), fileName("data/cut_in_grid.nvdb");
+    const std::string bytes = sphereFile(name);
+    const size_t metaEnd = sizeof(nanovdb::io::FileHeader) + sizeof(nanovdb::io::FileMetaData) + name.size() + 1;
+    for (size_t size : {metaEnd, size_t(400), size_t(671), bytes.size() - 1}) {
+        SCOPED_TRACE("cut at " + std::to_string(size) + " bytes");
+        writePrefix(fileName, bytes, size);
+        ASSERT_EQ(Outcome::Returned, runWithin([=]{ nanovdb::io::readGridMetaData(fileName); }));
+        EXPECT_EQ(1u, nanovdb::io::readGridMetaData(fileName).size());
+        EXPECT_EQ(Outcome::Threw, runWithin([=]{ nanovdb::io::readGrid(fileName, name); }));
+        EXPECT_EQ(Outcome::Threw, runWithin([=]{ nanovdb::io::readGrids(fileName); }));
+        ASSERT_EQ(Outcome::Returned, runWithin([=]{ nanovdb::io::hasGrid(fileName, name); }));
+        EXPECT_TRUE(nanovdb::io::hasGrid(fileName, name));
+    }
+}// ReadFileCutInGridDoesNotHang
+
+// A short file that is not a NanoVDB file at all is refused at once.
+TEST_F(TestNanoVDB, ReadShortNonNanoVDBFileThrows)
+{
+    const std::string fileName("data/garbage.nvdb"), text("garbage");
+    writePrefix(fileName, text, text.size());
+    EXPECT_EQ(Outcome::Threw, runWithin([=]{ nanovdb::io::readGridMetaData(fileName); }));
+    EXPECT_EQ(Outcome::Threw, runWithin([=]{ nanovdb::io::readGrid(fileName, "x"); }));
+    EXPECT_EQ(Outcome::Threw, runWithin([=]{ nanovdb::io::readGrids(fileName); }));
+    EXPECT_EQ(Outcome::Threw, runWithin([=]{ nanovdb::io::hasGrid(fileName, "x"); }));
+}// ReadShortNonNanoVDBFileThrows
 
 // make -j testNanoVDB && ./unittest/testNanoVDB --gtest_filter="*strcpy"
 TEST_F(TestNanoVDB, strcpy)
